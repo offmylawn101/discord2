@@ -59,6 +59,10 @@ export const useStore = create((set, get) => ({
   unreadChannels: {}, // { channelId: { count: number, lastMessageId: string } }
   unreadServers: {},  // { serverId: count }
 
+  // Connection
+  connectionState: 'disconnected', // 'connected', 'connecting', 'disconnected'
+  setConnectionState: (state) => set({ connectionState: state }),
+
   // UI
   showSettings: false,
   showServerSettings: false,
@@ -205,8 +209,13 @@ export const useStore = create((set, get) => ({
       // Not in this channel - mark as unread
       set(s => {
         const unreadChannels = { ...s.unreadChannels };
-        const current = unreadChannels[message.channel_id] || { count: 0 };
-        unreadChannels[message.channel_id] = { count: current.count + 1, lastMessageId: message.id };
+        const current = unreadChannels[message.channel_id] || { count: 0, mentions: 0 };
+        const mentionCount = (message.mentions && message.mentions.includes(s.user?.id)) ? 1 : 0;
+        unreadChannels[message.channel_id] = {
+          count: current.count + 1,
+          lastMessageId: message.id,
+          mentions: (current.mentions || 0) + mentionCount,
+        };
 
         // Also track server-level unread
         const unreadServers = { ...s.unreadServers };
