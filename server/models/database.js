@@ -338,6 +338,26 @@ async function initialize() {
       CREATE INDEX IF NOT EXISTS idx_voice_states_channel ON voice_states(channel_id);
       CREATE INDEX IF NOT EXISTS idx_relationships_user ON relationships(user_id);
       CREATE INDEX IF NOT EXISTS idx_audit_log_server ON audit_log(server_id, created_at);
+
+      -- Full-text search index
+      ALTER TABLE messages ADD COLUMN IF NOT EXISTS search_vector tsvector;
+      CREATE INDEX IF NOT EXISTS idx_messages_search ON messages USING GIN(search_vector);
+
+      -- Trigger to auto-update search vector
+      CREATE OR REPLACE FUNCTION messages_search_update() RETURNS trigger AS $$
+      BEGIN
+        NEW.search_vector := to_tsvector('english', COALESCE(NEW.content, ''));
+        RETURN NEW;
+      END;
+      $$ LANGUAGE plpgsql;
+
+      DROP TRIGGER IF EXISTS messages_search_trigger ON messages;
+      CREATE TRIGGER messages_search_trigger
+        BEFORE INSERT OR UPDATE OF content ON messages
+        FOR EACH ROW EXECUTE FUNCTION messages_search_update();
+
+      -- Backfill existing messages
+      UPDATE messages SET search_vector = to_tsvector('english', COALESCE(content, '')) WHERE search_vector IS NULL;
     `);
   } else {
     sqlite.exec(`
@@ -479,6 +499,33 @@ async function initialize() {
       CREATE INDEX IF NOT EXISTS idx_relationships_user ON relationships(user_id);
       CREATE INDEX IF NOT EXISTS idx_audit_log_server ON audit_log(server_id, created_at);
     `);
+
+    // FTS5 virtual table for full-text search (separate exec because virtual tables don't support IF NOT EXISTS in all cases)
+    try {
+      sqlite.exec(`
+        CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(content, content=messages, content_rowid=rowid);
+      `);
+    } catch (e) {
+      // Table may already exist
+    }
+
+    // Triggers to keep FTS in sync (use try/catch since CREATE TRIGGER IF NOT EXISTS not supported in older SQLite)
+    try {
+      sqlite.exec(`
+        CREATE TRIGGER IF NOT EXISTS messages_fts_insert AFTER INSERT ON messages BEGIN
+          INSERT INTO messages_fts(rowid, content) VALUES (new.rowid, new.content);
+        END;
+        CREATE TRIGGER IF NOT EXISTS messages_fts_delete AFTER DELETE ON messages BEGIN
+          INSERT INTO messages_fts(messages_fts, rowid, content) VALUES('delete', old.rowid, old.content);
+        END;
+        CREATE TRIGGER IF NOT EXISTS messages_fts_update AFTER UPDATE OF content ON messages BEGIN
+          INSERT INTO messages_fts(messages_fts, rowid, content) VALUES('delete', old.rowid, old.content);
+          INSERT INTO messages_fts(rowid, content) VALUES (new.rowid, new.content);
+        END;
+      `);
+    } catch (e) {
+      // Triggers may already exist
+    }
   }
 }
 
