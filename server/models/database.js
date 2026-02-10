@@ -338,6 +338,12 @@ async function initialize() {
       CREATE INDEX IF NOT EXISTS idx_voice_states_channel ON voice_states(channel_id);
       CREATE INDEX IF NOT EXISTS idx_relationships_user ON relationships(user_id);
       CREATE INDEX IF NOT EXISTS idx_audit_log_server ON audit_log(server_id, created_at);
+      CREATE INDEX IF NOT EXISTS idx_attachments_message ON attachments(message_id);
+      CREATE INDEX IF NOT EXISTS idx_dm_members_user ON dm_members(user_id);
+      CREATE INDEX IF NOT EXISTS idx_dm_members_channel ON dm_members(channel_id);
+      CREATE INDEX IF NOT EXISTS idx_channel_overwrites_channel ON channel_overwrites(channel_id);
+      CREATE INDEX IF NOT EXISTS idx_messages_reply ON messages(reply_to_id);
+      CREATE INDEX IF NOT EXISTS idx_server_members_server ON server_members(server_id);
 
       -- Full-text search index
       ALTER TABLE messages ADD COLUMN IF NOT EXISTS search_vector tsvector;
@@ -498,6 +504,12 @@ async function initialize() {
       CREATE INDEX IF NOT EXISTS idx_voice_states_channel ON voice_states(channel_id);
       CREATE INDEX IF NOT EXISTS idx_relationships_user ON relationships(user_id);
       CREATE INDEX IF NOT EXISTS idx_audit_log_server ON audit_log(server_id, created_at);
+      CREATE INDEX IF NOT EXISTS idx_attachments_message ON attachments(message_id);
+      CREATE INDEX IF NOT EXISTS idx_dm_members_user ON dm_members(user_id);
+      CREATE INDEX IF NOT EXISTS idx_dm_members_channel ON dm_members(channel_id);
+      CREATE INDEX IF NOT EXISTS idx_channel_overwrites_channel ON channel_overwrites(channel_id);
+      CREATE INDEX IF NOT EXISTS idx_messages_reply ON messages(reply_to_id);
+      CREATE INDEX IF NOT EXISTS idx_server_members_server ON server_members(server_id);
     `);
 
     // FTS5 virtual table for full-text search (separate exec because virtual tables don't support IF NOT EXISTS in all cases)
