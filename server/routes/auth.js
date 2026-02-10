@@ -23,8 +23,8 @@ function generateToken(userId) {
   return jwt.sign({ userId }, process.env.JWT_SECRET, { expiresIn: '7d' });
 }
 
-function generateDiscriminator(username) {
-  const existing = db.prepare('SELECT discriminator FROM users WHERE username = ? ORDER BY discriminator DESC').all(username);
+async function generateDiscriminator(username) {
+  const existing = await db.all('SELECT discriminator FROM users WHERE username = ? ORDER BY discriminator DESC', [username]);
   if (existing.length === 0) return '0001';
   const last = parseInt(existing[0].discriminator, 10);
   return String(last + 1).padStart(4, '0');
@@ -36,7 +36,7 @@ function sanitizeUser(user) {
 }
 
 // Register
-router.post('/register', (req, res) => {
+router.post('/register', async (req, res) => {
   try {
     const { username, email, password } = req.body;
     if (!username || !email || !password) {
@@ -49,21 +49,21 @@ router.post('/register', (req, res) => {
       return res.status(400).json({ error: 'Password must be at least 6 characters' });
     }
 
-    const existingEmail = db.prepare('SELECT id FROM users WHERE email = ?').get(email);
+    const existingEmail = await db.get('SELECT id FROM users WHERE email = ?', [email]);
     if (existingEmail) {
       return res.status(409).json({ error: 'Email already registered' });
     }
 
     const id = uuidv4();
-    const discriminator = generateDiscriminator(username);
+    const discriminator = await generateDiscriminator(username);
     const password_hash = bcrypt.hashSync(password, 12);
 
-    db.prepare(`
+    await db.run(`
       INSERT INTO users (id, username, discriminator, email, password_hash)
       VALUES (?, ?, ?, ?, ?)
-    `).run(id, username, discriminator, email, password_hash);
+    `, [id, username, discriminator, email, password_hash]);
 
-    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
+    const user = await db.get('SELECT * FROM users WHERE id = ?', [id]);
     const token = generateToken(id);
 
     res.status(201).json({ token, user: sanitizeUser(user) });
@@ -74,14 +74,14 @@ router.post('/register', (req, res) => {
 });
 
 // Login
-router.post('/login', (req, res) => {
+router.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body;
     if (!email || !password) {
       return res.status(400).json({ error: 'Email and password are required' });
     }
 
-    const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email);
+    const user = await db.get('SELECT * FROM users WHERE email = ?', [email]);
     if (!user || !bcrypt.compareSync(password, user.password_hash)) {
       return res.status(401).json({ error: 'Invalid email or password' });
     }
@@ -95,9 +95,9 @@ router.post('/login', (req, res) => {
 });
 
 // Get current user
-router.get('/me', authenticate, (req, res) => {
+router.get('/me', authenticate, async (req, res) => {
   try {
-    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.userId);
+    const user = await db.get('SELECT * FROM users WHERE id = ?', [req.userId]);
     if (!user) return res.status(404).json({ error: 'User not found' });
     res.json(sanitizeUser(user));
   } catch (err) {
@@ -106,7 +106,7 @@ router.get('/me', authenticate, (req, res) => {
 });
 
 // Update current user
-router.patch('/me', authenticate, (req, res) => {
+router.patch('/me', authenticate, async (req, res) => {
   try {
     const { username, avatar, banner_color, about_me, custom_status } = req.body;
     const updates = [];
@@ -123,8 +123,8 @@ router.patch('/me', authenticate, (req, res) => {
     updates.push('updated_at = CURRENT_TIMESTAMP');
     values.push(req.userId);
 
-    db.prepare(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`).run(...values);
-    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.userId);
+    await db.run(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`, values);
+    const user = await db.get('SELECT * FROM users WHERE id = ?', [req.userId]);
     res.json(sanitizeUser(user));
   } catch (err) {
     res.status(500).json({ error: 'Internal server error' });
@@ -132,12 +132,12 @@ router.patch('/me', authenticate, (req, res) => {
 });
 
 // Upload avatar
-router.post('/avatar', authenticate, avatarUpload.single('avatar'), (req, res) => {
+router.post('/avatar', authenticate, avatarUpload.single('avatar'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'No image provided' });
     const avatarUrl = `/uploads/avatars/${req.file.filename}`;
-    db.prepare('UPDATE users SET avatar = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(avatarUrl, req.userId);
-    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.userId);
+    await db.run('UPDATE users SET avatar = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [avatarUrl, req.userId]);
+    const user = await db.get('SELECT * FROM users WHERE id = ?', [req.userId]);
     res.json(sanitizeUser(user));
   } catch (err) {
     console.error('Avatar upload error:', err);

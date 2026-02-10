@@ -5,14 +5,14 @@ const { authenticate } = require('../middleware/auth');
 const router = express.Router();
 
 // Get relationships (friends list)
-router.get('/', authenticate, (req, res) => {
+router.get('/', authenticate, async (req, res) => {
   try {
-    const relationships = db.prepare(`
+    const relationships = await db.all(`
       SELECT r.*, u.username, u.discriminator, u.avatar, u.status, u.custom_status
       FROM relationships r
       INNER JOIN users u ON u.id = r.target_id
       WHERE r.user_id = ?
-    `).all(req.userId);
+    `, [req.userId]);
     res.json(relationships);
   } catch (err) {
     res.status(500).json({ error: 'Internal server error' });
@@ -20,16 +20,16 @@ router.get('/', authenticate, (req, res) => {
 });
 
 // Send friend request
-router.post('/', authenticate, (req, res) => {
+router.post('/', authenticate, async (req, res) => {
   try {
     const { username, discriminator } = req.body;
 
-    const target = db.prepare('SELECT id FROM users WHERE username = ? AND discriminator = ?').get(username, discriminator);
+    const target = await db.get('SELECT id FROM users WHERE username = ? AND discriminator = ?', [username, discriminator]);
     if (!target) return res.status(404).json({ error: 'User not found' });
     if (target.id === req.userId) return res.status(400).json({ error: 'Cannot friend yourself' });
 
     // Check if already friends or pending
-    const existing = db.prepare('SELECT type FROM relationships WHERE user_id = ? AND target_id = ?').get(req.userId, target.id);
+    const existing = await db.get('SELECT type FROM relationships WHERE user_id = ? AND target_id = ?', [req.userId, target.id]);
     if (existing) {
       if (existing.type === 'friend') return res.status(400).json({ error: 'Already friends' });
       if (existing.type === 'pending_outgoing') return res.status(400).json({ error: 'Friend request already sent' });
@@ -37,22 +37,20 @@ router.post('/', authenticate, (req, res) => {
     }
 
     // Check if they sent us a request
-    const incoming = db.prepare('SELECT type FROM relationships WHERE user_id = ? AND target_id = ?').get(target.id, req.userId);
+    const incoming = await db.get('SELECT type FROM relationships WHERE user_id = ? AND target_id = ?', [target.id, req.userId]);
     if (incoming && incoming.type === 'pending_outgoing') {
       // Auto-accept: they already sent us a request
-      const accept = db.transaction(() => {
-        db.prepare('UPDATE relationships SET type = ? WHERE user_id = ? AND target_id = ?').run('friend', target.id, req.userId);
-        db.prepare('INSERT OR REPLACE INTO relationships (user_id, target_id, type) VALUES (?, ?, ?)').run(req.userId, target.id, 'friend');
+      await db.transaction(async (tx) => {
+        await tx.run('UPDATE relationships SET type = ? WHERE user_id = ? AND target_id = ?', ['friend', target.id, req.userId]);
+        await tx.run('INSERT OR REPLACE INTO relationships (user_id, target_id, type) VALUES (?, ?, ?)', [req.userId, target.id, 'friend']);
       });
-      accept();
       return res.json({ type: 'friend', accepted: true });
     }
 
-    const send = db.transaction(() => {
-      db.prepare('INSERT OR REPLACE INTO relationships (user_id, target_id, type) VALUES (?, ?, ?)').run(req.userId, target.id, 'pending_outgoing');
-      db.prepare('INSERT OR REPLACE INTO relationships (user_id, target_id, type) VALUES (?, ?, ?)').run(target.id, req.userId, 'pending_incoming');
+    await db.transaction(async (tx) => {
+      await tx.run('INSERT OR REPLACE INTO relationships (user_id, target_id, type) VALUES (?, ?, ?)', [req.userId, target.id, 'pending_outgoing']);
+      await tx.run('INSERT OR REPLACE INTO relationships (user_id, target_id, type) VALUES (?, ?, ?)', [target.id, req.userId, 'pending_incoming']);
     });
-    send();
 
     res.json({ type: 'pending_outgoing' });
   } catch (err) {
@@ -62,20 +60,19 @@ router.post('/', authenticate, (req, res) => {
 });
 
 // Accept friend request
-router.put('/:targetId', authenticate, (req, res) => {
+router.put('/:targetId', authenticate, async (req, res) => {
   try {
     const { targetId } = req.params;
 
-    const rel = db.prepare('SELECT type FROM relationships WHERE user_id = ? AND target_id = ?').get(req.userId, targetId);
+    const rel = await db.get('SELECT type FROM relationships WHERE user_id = ? AND target_id = ?', [req.userId, targetId]);
     if (!rel || rel.type !== 'pending_incoming') {
       return res.status(400).json({ error: 'No pending friend request from this user' });
     }
 
-    const accept = db.transaction(() => {
-      db.prepare('UPDATE relationships SET type = ? WHERE user_id = ? AND target_id = ?').run('friend', req.userId, targetId);
-      db.prepare('UPDATE relationships SET type = ? WHERE user_id = ? AND target_id = ?').run('friend', targetId, req.userId);
+    await db.transaction(async (tx) => {
+      await tx.run('UPDATE relationships SET type = ? WHERE user_id = ? AND target_id = ?', ['friend', req.userId, targetId]);
+      await tx.run('UPDATE relationships SET type = ? WHERE user_id = ? AND target_id = ?', ['friend', targetId, req.userId]);
     });
-    accept();
 
     res.json({ type: 'friend' });
   } catch (err) {
@@ -84,15 +81,14 @@ router.put('/:targetId', authenticate, (req, res) => {
 });
 
 // Remove friend / cancel request / unblock
-router.delete('/:targetId', authenticate, (req, res) => {
+router.delete('/:targetId', authenticate, async (req, res) => {
   try {
     const { targetId } = req.params;
 
-    const remove = db.transaction(() => {
-      db.prepare('DELETE FROM relationships WHERE user_id = ? AND target_id = ?').run(req.userId, targetId);
-      db.prepare('DELETE FROM relationships WHERE user_id = ? AND target_id = ?').run(targetId, req.userId);
+    await db.transaction(async (tx) => {
+      await tx.run('DELETE FROM relationships WHERE user_id = ? AND target_id = ?', [req.userId, targetId]);
+      await tx.run('DELETE FROM relationships WHERE user_id = ? AND target_id = ?', [targetId, req.userId]);
     });
-    remove();
 
     res.json({ removed: true });
   } catch (err) {
@@ -101,16 +97,15 @@ router.delete('/:targetId', authenticate, (req, res) => {
 });
 
 // Block user
-router.put('/:targetId/block', authenticate, (req, res) => {
+router.put('/:targetId/block', authenticate, async (req, res) => {
   try {
     const { targetId } = req.params;
 
-    const block = db.transaction(() => {
-      db.prepare('INSERT OR REPLACE INTO relationships (user_id, target_id, type) VALUES (?, ?, ?)').run(req.userId, targetId, 'blocked');
+    await db.transaction(async (tx) => {
+      await tx.run('INSERT OR REPLACE INTO relationships (user_id, target_id, type) VALUES (?, ?, ?)', [req.userId, targetId, 'blocked']);
       // Remove their relationship with us
-      db.prepare('DELETE FROM relationships WHERE user_id = ? AND target_id = ?').run(targetId, req.userId);
+      await tx.run('DELETE FROM relationships WHERE user_id = ? AND target_id = ?', [targetId, req.userId]);
     });
-    block();
 
     res.json({ type: 'blocked' });
   } catch (err) {

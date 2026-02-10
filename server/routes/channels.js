@@ -7,10 +7,10 @@ const { PERMISSIONS, checkPermission } = require('../utils/permissions');
 const router = express.Router();
 
 // Create channel
-router.post('/:serverId/channels', authenticate, (req, res) => {
+router.post('/:serverId/channels', authenticate, async (req, res) => {
   try {
     const { serverId } = req.params;
-    if (!checkPermission(db, req.userId, serverId, null, PERMISSIONS.MANAGE_CHANNELS)) {
+    if (!await checkPermission(db, req.userId, serverId, null, PERMISSIONS.MANAGE_CHANNELS)) {
       return res.status(403).json({ error: 'Missing MANAGE_CHANNELS permission' });
     }
 
@@ -20,22 +20,23 @@ router.post('/:serverId/channels', authenticate, (req, res) => {
     }
 
     // Get next position
-    const lastChannel = db.prepare(
-      'SELECT MAX(position) as maxPos FROM channels WHERE server_id = ? AND category_id IS ?'
-    ).get(serverId, category_id || null);
+    const lastChannel = await db.get(
+      'SELECT MAX(position) as maxPos FROM channels WHERE server_id = ? AND category_id IS ?',
+      [serverId, category_id || null]
+    );
     const position = (lastChannel?.maxPos ?? -1) + 1;
 
     const id = uuidv4();
     // Normalize name for text channels (lowercase, replace spaces with hyphens)
     const channelName = type === 'text' ? name.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9-]/g, '') : name;
 
-    db.prepare(`
+    await db.run(`
       INSERT INTO channels (id, server_id, category_id, name, type, position, topic, slowmode, nsfw, bitrate, user_limit)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(id, serverId, category_id || null, channelName, type, position,
-           topic || '', slowmode || 0, nsfw ? 1 : 0, bitrate || 64000, user_limit || 0);
+    `, [id, serverId, category_id || null, channelName, type, position,
+        topic || '', slowmode || 0, nsfw ? 1 : 0, bitrate || 64000, user_limit || 0]);
 
-    const channel = db.prepare('SELECT * FROM channels WHERE id = ?').get(id);
+    const channel = await db.get('SELECT * FROM channels WHERE id = ?', [id]);
     res.status(201).json(channel);
   } catch (err) {
     console.error('Create channel error:', err);
@@ -44,23 +45,23 @@ router.post('/:serverId/channels', authenticate, (req, res) => {
 });
 
 // Create category
-router.post('/:serverId/categories', authenticate, (req, res) => {
+router.post('/:serverId/categories', authenticate, async (req, res) => {
   try {
     const { serverId } = req.params;
-    if (!checkPermission(db, req.userId, serverId, null, PERMISSIONS.MANAGE_CHANNELS)) {
+    if (!await checkPermission(db, req.userId, serverId, null, PERMISSIONS.MANAGE_CHANNELS)) {
       return res.status(403).json({ error: 'Missing MANAGE_CHANNELS permission' });
     }
 
     const { name } = req.body;
     if (!name) return res.status(400).json({ error: 'Category name is required' });
 
-    const lastCat = db.prepare('SELECT MAX(position) as maxPos FROM channel_categories WHERE server_id = ?').get(serverId);
+    const lastCat = await db.get('SELECT MAX(position) as maxPos FROM channel_categories WHERE server_id = ?', [serverId]);
     const position = (lastCat?.maxPos ?? -1) + 1;
 
     const id = uuidv4();
-    db.prepare('INSERT INTO channel_categories (id, server_id, name, position) VALUES (?, ?, ?, ?)').run(id, serverId, name, position);
+    await db.run('INSERT INTO channel_categories (id, server_id, name, position) VALUES (?, ?, ?, ?)', [id, serverId, name, position]);
 
-    const category = db.prepare('SELECT * FROM channel_categories WHERE id = ?').get(id);
+    const category = await db.get('SELECT * FROM channel_categories WHERE id = ?', [id]);
     res.status(201).json(category);
   } catch (err) {
     res.status(500).json({ error: 'Internal server error' });
@@ -68,14 +69,14 @@ router.post('/:serverId/categories', authenticate, (req, res) => {
 });
 
 // Update channel
-router.patch('/channels/:channelId', authenticate, (req, res) => {
+router.patch('/channels/:channelId', authenticate, async (req, res) => {
   try {
     const { channelId } = req.params;
-    const channel = db.prepare('SELECT * FROM channels WHERE id = ?').get(channelId);
+    const channel = await db.get('SELECT * FROM channels WHERE id = ?', [channelId]);
     if (!channel) return res.status(404).json({ error: 'Channel not found' });
 
     if (channel.server_id) {
-      if (!checkPermission(db, req.userId, channel.server_id, channelId, PERMISSIONS.MANAGE_CHANNELS)) {
+      if (!await checkPermission(db, req.userId, channel.server_id, channelId, PERMISSIONS.MANAGE_CHANNELS)) {
         return res.status(403).json({ error: 'Missing MANAGE_CHANNELS permission' });
       }
     }
@@ -98,8 +99,8 @@ router.patch('/channels/:channelId', authenticate, (req, res) => {
     updates.push('updated_at = CURRENT_TIMESTAMP');
     values.push(channelId);
 
-    db.prepare(`UPDATE channels SET ${updates.join(', ')} WHERE id = ?`).run(...values);
-    const updated = db.prepare('SELECT * FROM channels WHERE id = ?').get(channelId);
+    await db.run(`UPDATE channels SET ${updates.join(', ')} WHERE id = ?`, values);
+    const updated = await db.get('SELECT * FROM channels WHERE id = ?', [channelId]);
     res.json(updated);
   } catch (err) {
     res.status(500).json({ error: 'Internal server error' });
@@ -107,25 +108,24 @@ router.patch('/channels/:channelId', authenticate, (req, res) => {
 });
 
 // Batch reorder channels
-router.patch('/:serverId/channels/reorder', authenticate, (req, res) => {
+router.patch('/:serverId/channels/reorder', authenticate, async (req, res) => {
   try {
     const { serverId } = req.params;
-    if (!checkPermission(db, req.userId, serverId, null, PERMISSIONS.MANAGE_CHANNELS)) {
+    if (!await checkPermission(db, req.userId, serverId, null, PERMISSIONS.MANAGE_CHANNELS)) {
       return res.status(403).json({ error: 'Missing MANAGE_CHANNELS permission' });
     }
 
     const { channels } = req.body; // [{ id, position, category_id }]
     if (!Array.isArray(channels)) return res.status(400).json({ error: 'channels array required' });
 
-    const stmt = db.prepare('UPDATE channels SET position = ?, category_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND server_id = ?');
-    const reorder = db.transaction((items) => {
-      for (const ch of items) {
-        stmt.run(ch.position, ch.category_id ?? null, ch.id, serverId);
+    await db.transaction(async (tx) => {
+      for (const ch of channels) {
+        await tx.run('UPDATE channels SET position = ?, category_id = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND server_id = ?',
+          [ch.position, ch.category_id ?? null, ch.id, serverId]);
       }
     });
-    reorder(channels);
 
-    const updated = db.prepare('SELECT * FROM channels WHERE server_id = ? ORDER BY position').all(serverId);
+    const updated = await db.all('SELECT * FROM channels WHERE server_id = ? ORDER BY position', [serverId]);
     res.json(updated);
   } catch (err) {
     console.error('Channel reorder error:', err);
@@ -134,19 +134,19 @@ router.patch('/:serverId/channels/reorder', authenticate, (req, res) => {
 });
 
 // Delete channel
-router.delete('/channels/:channelId', authenticate, (req, res) => {
+router.delete('/channels/:channelId', authenticate, async (req, res) => {
   try {
     const { channelId } = req.params;
-    const channel = db.prepare('SELECT * FROM channels WHERE id = ?').get(channelId);
+    const channel = await db.get('SELECT * FROM channels WHERE id = ?', [channelId]);
     if (!channel) return res.status(404).json({ error: 'Channel not found' });
 
     if (channel.server_id) {
-      if (!checkPermission(db, req.userId, channel.server_id, channelId, PERMISSIONS.MANAGE_CHANNELS)) {
+      if (!await checkPermission(db, req.userId, channel.server_id, channelId, PERMISSIONS.MANAGE_CHANNELS)) {
         return res.status(403).json({ error: 'Missing MANAGE_CHANNELS permission' });
       }
     }
 
-    db.prepare('DELETE FROM channels WHERE id = ?').run(channelId);
+    await db.run('DELETE FROM channels WHERE id = ?', [channelId]);
     res.json({ deleted: true });
   } catch (err) {
     res.status(500).json({ error: 'Internal server error' });
@@ -154,13 +154,13 @@ router.delete('/channels/:channelId', authenticate, (req, res) => {
 });
 
 // Update channel permission overwrites
-router.put('/channels/:channelId/overwrites/:targetId', authenticate, (req, res) => {
+router.put('/channels/:channelId/overwrites/:targetId', authenticate, async (req, res) => {
   try {
     const { channelId, targetId } = req.params;
-    const channel = db.prepare('SELECT * FROM channels WHERE id = ?').get(channelId);
+    const channel = await db.get('SELECT * FROM channels WHERE id = ?', [channelId]);
     if (!channel || !channel.server_id) return res.status(404).json({ error: 'Channel not found' });
 
-    if (!checkPermission(db, req.userId, channel.server_id, channelId, PERMISSIONS.MANAGE_ROLES)) {
+    if (!await checkPermission(db, req.userId, channel.server_id, channelId, PERMISSIONS.MANAGE_ROLES)) {
       return res.status(403).json({ error: 'Missing MANAGE_ROLES permission' });
     }
 
@@ -169,17 +169,17 @@ router.put('/channels/:channelId/overwrites/:targetId', authenticate, (req, res)
       return res.status(400).json({ error: 'target_type must be role or member' });
     }
 
-    const existing = db.prepare('SELECT id FROM channel_overwrites WHERE channel_id = ? AND target_id = ?').get(channelId, targetId);
+    const existing = await db.get('SELECT id FROM channel_overwrites WHERE channel_id = ? AND target_id = ?', [channelId, targetId]);
     if (existing) {
-      db.prepare('UPDATE channel_overwrites SET allow = ?, deny = ? WHERE id = ?')
-        .run((allow || 0).toString(), (deny || 0).toString(), existing.id);
+      await db.run('UPDATE channel_overwrites SET allow = ?, deny = ? WHERE id = ?',
+        [(allow || 0).toString(), (deny || 0).toString(), existing.id]);
     } else {
       const id = uuidv4();
-      db.prepare('INSERT INTO channel_overwrites (id, channel_id, target_type, target_id, allow, deny) VALUES (?, ?, ?, ?, ?, ?)')
-        .run(id, channelId, target_type, targetId, (allow || 0).toString(), (deny || 0).toString());
+      await db.run('INSERT INTO channel_overwrites (id, channel_id, target_type, target_id, allow, deny) VALUES (?, ?, ?, ?, ?, ?)',
+        [id, channelId, target_type, targetId, (allow || 0).toString(), (deny || 0).toString()]);
     }
 
-    const overwrites = db.prepare('SELECT * FROM channel_overwrites WHERE channel_id = ?').all(channelId);
+    const overwrites = await db.all('SELECT * FROM channel_overwrites WHERE channel_id = ?', [channelId]);
     res.json(overwrites);
   } catch (err) {
     res.status(500).json({ error: 'Internal server error' });
@@ -187,17 +187,17 @@ router.put('/channels/:channelId/overwrites/:targetId', authenticate, (req, res)
 });
 
 // Delete channel permission overwrite
-router.delete('/channels/:channelId/overwrites/:targetId', authenticate, (req, res) => {
+router.delete('/channels/:channelId/overwrites/:targetId', authenticate, async (req, res) => {
   try {
     const { channelId, targetId } = req.params;
-    const channel = db.prepare('SELECT * FROM channels WHERE id = ?').get(channelId);
+    const channel = await db.get('SELECT * FROM channels WHERE id = ?', [channelId]);
     if (!channel || !channel.server_id) return res.status(404).json({ error: 'Channel not found' });
 
-    if (!checkPermission(db, req.userId, channel.server_id, channelId, PERMISSIONS.MANAGE_ROLES)) {
+    if (!await checkPermission(db, req.userId, channel.server_id, channelId, PERMISSIONS.MANAGE_ROLES)) {
       return res.status(403).json({ error: 'Missing MANAGE_ROLES permission' });
     }
 
-    db.prepare('DELETE FROM channel_overwrites WHERE channel_id = ? AND target_id = ?').run(channelId, targetId);
+    await db.run('DELETE FROM channel_overwrites WHERE channel_id = ? AND target_id = ?', [channelId, targetId]);
     res.json({ deleted: true });
   } catch (err) {
     res.status(500).json({ error: 'Internal server error' });

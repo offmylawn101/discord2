@@ -11,13 +11,13 @@ function generateInviteCode() {
 }
 
 // Create invite
-router.post('/:channelId/invites', authenticate, (req, res) => {
+router.post('/:channelId/invites', authenticate, async (req, res) => {
   try {
     const { channelId } = req.params;
-    const channel = db.prepare('SELECT * FROM channels WHERE id = ?').get(channelId);
+    const channel = await db.get('SELECT * FROM channels WHERE id = ?', [channelId]);
     if (!channel || !channel.server_id) return res.status(404).json({ error: 'Channel not found' });
 
-    if (!checkPermission(db, req.userId, channel.server_id, channelId, PERMISSIONS.CREATE_INVITE)) {
+    if (!await checkPermission(db, req.userId, channel.server_id, channelId, PERMISSIONS.CREATE_INVITE)) {
       return res.status(403).json({ error: 'Missing CREATE_INVITE permission' });
     }
 
@@ -26,12 +26,12 @@ router.post('/:channelId/invites', authenticate, (req, res) => {
     const code = generateInviteCode();
     const expires_at = max_age > 0 ? new Date(Date.now() + max_age * 1000).toISOString() : null;
 
-    db.prepare(`
+    await db.run(`
       INSERT INTO invites (code, server_id, channel_id, inviter_id, max_uses, max_age, temporary, expires_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(code, channel.server_id, channelId, req.userId, max_uses, max_age, temporary ? 1 : 0, expires_at);
+    `, [code, channel.server_id, channelId, req.userId, max_uses, max_age, temporary ? 1 : 0, expires_at]);
 
-    const invite = db.prepare(`
+    const invite = await db.get(`
       SELECT i.*, s.name as server_name, s.icon as server_icon, c.name as channel_name,
              u.username as inviter_username
       FROM invites i
@@ -39,7 +39,7 @@ router.post('/:channelId/invites', authenticate, (req, res) => {
       INNER JOIN channels c ON c.id = i.channel_id
       INNER JOIN users u ON u.id = i.inviter_id
       WHERE i.code = ?
-    `).get(code);
+    `, [code]);
 
     res.status(201).json(invite);
   } catch (err) {
@@ -49,10 +49,10 @@ router.post('/:channelId/invites', authenticate, (req, res) => {
 });
 
 // Get invite info
-router.get('/invites/:code', (req, res) => {
+router.get('/invites/:code', async (req, res) => {
   try {
     const { code } = req.params;
-    const invite = db.prepare(`
+    const invite = await db.get(`
       SELECT i.*, s.name as server_name, s.icon as server_icon, s.description as server_description,
              c.name as channel_name, u.username as inviter_username,
              (SELECT COUNT(*) FROM server_members WHERE server_id = s.id) as member_count
@@ -61,13 +61,13 @@ router.get('/invites/:code', (req, res) => {
       INNER JOIN channels c ON c.id = i.channel_id
       INNER JOIN users u ON u.id = i.inviter_id
       WHERE i.code = ?
-    `).get(code);
+    `, [code]);
 
     if (!invite) return res.status(404).json({ error: 'Invite not found or expired' });
 
     // Check expiry
     if (invite.expires_at && new Date(invite.expires_at) < new Date()) {
-      db.prepare('DELETE FROM invites WHERE code = ?').run(code);
+      await db.run('DELETE FROM invites WHERE code = ?', [code]);
       return res.status(404).json({ error: 'Invite has expired' });
     }
 
@@ -78,15 +78,15 @@ router.get('/invites/:code', (req, res) => {
 });
 
 // Use invite (join server)
-router.post('/invites/:code', authenticate, (req, res) => {
+router.post('/invites/:code', authenticate, async (req, res) => {
   try {
     const { code } = req.params;
-    const invite = db.prepare('SELECT * FROM invites WHERE code = ?').get(code);
+    const invite = await db.get('SELECT * FROM invites WHERE code = ?', [code]);
     if (!invite) return res.status(404).json({ error: 'Invite not found' });
 
     // Check expiry
     if (invite.expires_at && new Date(invite.expires_at) < new Date()) {
-      db.prepare('DELETE FROM invites WHERE code = ?').run(code);
+      await db.run('DELETE FROM invites WHERE code = ?', [code]);
       return res.status(404).json({ error: 'Invite has expired' });
     }
 
@@ -96,34 +96,32 @@ router.post('/invites/:code', authenticate, (req, res) => {
     }
 
     // Check if banned
-    const banned = db.prepare('SELECT 1 FROM bans WHERE server_id = ? AND user_id = ?').get(invite.server_id, req.userId);
+    const banned = await db.get('SELECT 1 FROM bans WHERE server_id = ? AND user_id = ?', [invite.server_id, req.userId]);
     if (banned) return res.status(403).json({ error: 'You are banned from this server' });
 
     // Check if already member
-    const existing = db.prepare('SELECT 1 FROM server_members WHERE server_id = ? AND user_id = ?').get(invite.server_id, req.userId);
+    const existing = await db.get('SELECT 1 FROM server_members WHERE server_id = ? AND user_id = ?', [invite.server_id, req.userId]);
     if (existing) {
-      const server = db.prepare('SELECT * FROM servers WHERE id = ?').get(invite.server_id);
+      const server = await db.get('SELECT * FROM servers WHERE id = ?', [invite.server_id]);
       return res.json({ server, already_member: true });
     }
 
-    const join = db.transaction(() => {
+    await db.transaction(async (tx) => {
       // Add as member
-      db.prepare('INSERT INTO server_members (server_id, user_id) VALUES (?, ?)').run(invite.server_id, req.userId);
+      await tx.run('INSERT INTO server_members (server_id, user_id) VALUES (?, ?)', [invite.server_id, req.userId]);
 
       // Assign @everyone role
-      const defaultRole = db.prepare('SELECT id FROM roles WHERE server_id = ? AND is_default = 1').get(invite.server_id);
+      const defaultRole = await tx.get('SELECT id FROM roles WHERE server_id = ? AND is_default = 1', [invite.server_id]);
       if (defaultRole) {
-        db.prepare('INSERT INTO member_roles (server_id, user_id, role_id) VALUES (?, ?, ?)')
-          .run(invite.server_id, req.userId, defaultRole.id);
+        await tx.run('INSERT INTO member_roles (server_id, user_id, role_id) VALUES (?, ?, ?)',
+          [invite.server_id, req.userId, defaultRole.id]);
       }
 
       // Increment uses
-      db.prepare('UPDATE invites SET uses = uses + 1 WHERE code = ?').run(code);
+      await tx.run('UPDATE invites SET uses = uses + 1 WHERE code = ?', [code]);
     });
 
-    join();
-
-    const server = db.prepare('SELECT * FROM servers WHERE id = ?').get(invite.server_id);
+    const server = await db.get('SELECT * FROM servers WHERE id = ?', [invite.server_id]);
     res.json({ server, joined: true });
   } catch (err) {
     console.error('Use invite error:', err);
@@ -132,20 +130,20 @@ router.post('/invites/:code', authenticate, (req, res) => {
 });
 
 // Get server invites
-router.get('/:serverId/invites', authenticate, (req, res) => {
+router.get('/:serverId/invites', authenticate, async (req, res) => {
   try {
     const { serverId } = req.params;
-    if (!checkPermission(db, req.userId, serverId, null, PERMISSIONS.MANAGE_SERVER)) {
+    if (!await checkPermission(db, req.userId, serverId, null, PERMISSIONS.MANAGE_SERVER)) {
       return res.status(403).json({ error: 'Missing MANAGE_SERVER permission' });
     }
 
-    const invites = db.prepare(`
+    const invites = await db.all(`
       SELECT i.*, u.username as inviter_username, c.name as channel_name
       FROM invites i
       INNER JOIN users u ON u.id = i.inviter_id
       INNER JOIN channels c ON c.id = i.channel_id
       WHERE i.server_id = ?
-    `).all(serverId);
+    `, [serverId]);
     res.json(invites);
   } catch (err) {
     res.status(500).json({ error: 'Internal server error' });
@@ -153,20 +151,20 @@ router.get('/:serverId/invites', authenticate, (req, res) => {
 });
 
 // Delete invite
-router.delete('/invites/:code', authenticate, (req, res) => {
+router.delete('/invites/:code', authenticate, async (req, res) => {
   try {
     const { code } = req.params;
-    const invite = db.prepare('SELECT * FROM invites WHERE code = ?').get(code);
+    const invite = await db.get('SELECT * FROM invites WHERE code = ?', [code]);
     if (!invite) return res.status(404).json({ error: 'Invite not found' });
 
     // Inviter or server managers can delete
     if (invite.inviter_id !== req.userId) {
-      if (!checkPermission(db, req.userId, invite.server_id, null, PERMISSIONS.MANAGE_SERVER)) {
+      if (!await checkPermission(db, req.userId, invite.server_id, null, PERMISSIONS.MANAGE_SERVER)) {
         return res.status(403).json({ error: 'Missing permission to delete this invite' });
       }
     }
 
-    db.prepare('DELETE FROM invites WHERE code = ?').run(code);
+    await db.run('DELETE FROM invites WHERE code = ?', [code]);
     res.json({ deleted: true });
   } catch (err) {
     res.status(500).json({ error: 'Internal server error' });

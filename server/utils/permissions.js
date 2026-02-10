@@ -66,21 +66,21 @@ function hasPermission(userPermissions, permission) {
   return (perms & perm) === perm;
 }
 
-function computePermissions(db, userId, serverId, channelId = null) {
+async function computePermissions(db, userId, serverId, channelId = null) {
   // Server owner has all permissions
-  const server = db.prepare('SELECT owner_id FROM servers WHERE id = ?').get(serverId);
+  const server = await db.get('SELECT owner_id FROM servers WHERE id = ?', [serverId]);
   if (!server) return 0n;
   if (server.owner_id === userId) return ALL_PERMISSIONS;
 
   // Get member's roles
-  const memberRoles = db.prepare(`
+  const memberRoles = await db.all(`
     SELECT r.permissions, r.position FROM roles r
     INNER JOIN member_roles mr ON mr.role_id = r.id
     WHERE mr.server_id = ? AND mr.user_id = ?
     UNION
     SELECT r.permissions, r.position FROM roles r
     WHERE r.server_id = ? AND r.is_default = 1
-  `).all(serverId, userId, serverId);
+  `, [serverId, userId, serverId]);
 
   if (memberRoles.length === 0) return 0n;
 
@@ -94,13 +94,13 @@ function computePermissions(db, userId, serverId, channelId = null) {
 
   // Apply channel permission overwrites if a channel is specified
   if (channelId) {
-    const overwrites = db.prepare(`
+    const overwrites = await db.all(`
       SELECT target_type, target_id, allow, deny FROM channel_overwrites
       WHERE channel_id = ?
-    `).all(channelId);
+    `, [channelId]);
 
     // @everyone role overwrite
-    const defaultRole = db.prepare('SELECT id FROM roles WHERE server_id = ? AND is_default = 1').get(serverId);
+    const defaultRole = await db.get('SELECT id FROM roles WHERE server_id = ? AND is_default = 1', [serverId]);
     if (defaultRole) {
       const everyoneOverwrite = overwrites.find(o => o.target_type === 'role' && o.target_id === defaultRole.id);
       if (everyoneOverwrite) {
@@ -110,9 +110,10 @@ function computePermissions(db, userId, serverId, channelId = null) {
     }
 
     // Role overwrites (combine all role allows/denies)
-    const userRoleIds = db.prepare(`
+    const userRoleRows = await db.all(`
       SELECT role_id FROM member_roles WHERE server_id = ? AND user_id = ?
-    `).all(serverId, userId).map(r => r.role_id);
+    `, [serverId, userId]);
+    const userRoleIds = userRoleRows.map(r => r.role_id);
 
     let roleAllow = 0n;
     let roleDeny = 0n;
@@ -136,8 +137,8 @@ function computePermissions(db, userId, serverId, channelId = null) {
   return permissions;
 }
 
-function checkPermission(db, userId, serverId, channelId, ...requiredPermissions) {
-  const perms = computePermissions(db, userId, serverId, channelId);
+async function checkPermission(db, userId, serverId, channelId, ...requiredPermissions) {
+  const perms = await computePermissions(db, userId, serverId, channelId);
   for (const perm of requiredPermissions) {
     if (!hasPermission(perms, perm)) return false;
   }

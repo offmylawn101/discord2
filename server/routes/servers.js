@@ -19,7 +19,7 @@ const iconUpload = multer({ storage: iconStorage, limits: { fileSize: 8 * 1024 *
 }});
 
 // Create server
-router.post('/', authenticate, (req, res) => {
+router.post('/', authenticate, async (req, res) => {
   try {
     const { name, icon } = req.body;
     if (!name || name.length < 2 || name.length > 100) {
@@ -32,62 +32,60 @@ router.post('/', authenticate, (req, res) => {
     const textChannelId = uuidv4();
     const voiceChannelId = uuidv4();
 
-    const createServer = db.transaction(() => {
+    await db.transaction(async (tx) => {
       // Create server
-      db.prepare(`
+      await tx.run(`
         INSERT INTO servers (id, name, icon, owner_id)
         VALUES (?, ?, ?, ?)
-      `).run(serverId, name, icon || null, req.userId);
+      `, [serverId, name, icon || null, req.userId]);
 
       // Create @everyone role
-      db.prepare(`
+      await tx.run(`
         INSERT INTO roles (id, server_id, name, color, position, permissions, is_default)
         VALUES (?, ?, '@everyone', '#99AAB5', 0, ?, 1)
-      `).run(roleId, serverId, DEFAULT_PERMISSIONS.toString());
+      `, [roleId, serverId, DEFAULT_PERMISSIONS.toString()]);
 
       // Update server's default role
-      db.prepare('UPDATE servers SET default_role_id = ? WHERE id = ?').run(roleId, serverId);
+      await tx.run('UPDATE servers SET default_role_id = ? WHERE id = ?', [roleId, serverId]);
 
       // Create default category
-      db.prepare(`
+      await tx.run(`
         INSERT INTO channel_categories (id, server_id, name, position)
         VALUES (?, ?, 'Text Channels', 0)
-      `).run(generalCategoryId, serverId);
+      `, [generalCategoryId, serverId]);
 
       // Create #general text channel
-      db.prepare(`
+      await tx.run(`
         INSERT INTO channels (id, server_id, category_id, name, type, position)
         VALUES (?, ?, ?, 'general', 'text', 0)
-      `).run(textChannelId, serverId, generalCategoryId);
+      `, [textChannelId, serverId, generalCategoryId]);
 
       // Create General voice channel
-      db.prepare(`
+      await tx.run(`
         INSERT INTO channels (id, server_id, category_id, name, type, position)
         VALUES (?, ?, ?, 'General', 'voice', 1)
-      `).run(voiceChannelId, serverId, generalCategoryId);
+      `, [voiceChannelId, serverId, generalCategoryId]);
 
       // Set system channel
-      db.prepare('UPDATE servers SET system_channel_id = ? WHERE id = ?').run(textChannelId, serverId);
+      await tx.run('UPDATE servers SET system_channel_id = ? WHERE id = ?', [textChannelId, serverId]);
 
       // Add owner as member
-      db.prepare(`
+      await tx.run(`
         INSERT INTO server_members (server_id, user_id)
         VALUES (?, ?)
-      `).run(serverId, req.userId);
+      `, [serverId, req.userId]);
 
       // Assign @everyone role to owner
-      db.prepare(`
+      await tx.run(`
         INSERT INTO member_roles (server_id, user_id, role_id)
         VALUES (?, ?, ?)
-      `).run(serverId, req.userId, roleId);
+      `, [serverId, req.userId, roleId]);
     });
 
-    createServer();
-
-    const server = db.prepare('SELECT * FROM servers WHERE id = ?').get(serverId);
-    const channels = db.prepare('SELECT * FROM channels WHERE server_id = ?').all(serverId);
-    const roles = db.prepare('SELECT * FROM roles WHERE server_id = ?').all(serverId);
-    const categories = db.prepare('SELECT * FROM channel_categories WHERE server_id = ?').all(serverId);
+    const server = await db.get('SELECT * FROM servers WHERE id = ?', [serverId]);
+    const channels = await db.all('SELECT * FROM channels WHERE server_id = ?', [serverId]);
+    const roles = await db.all('SELECT * FROM roles WHERE server_id = ?', [serverId]);
+    const categories = await db.all('SELECT * FROM channel_categories WHERE server_id = ?', [serverId]);
 
     res.status(201).json({ ...server, channels, roles, categories });
   } catch (err) {
@@ -97,14 +95,14 @@ router.post('/', authenticate, (req, res) => {
 });
 
 // Get user's servers
-router.get('/', authenticate, (req, res) => {
+router.get('/', authenticate, async (req, res) => {
   try {
-    const servers = db.prepare(`
+    const servers = await db.all(`
       SELECT s.* FROM servers s
       INNER JOIN server_members sm ON sm.server_id = s.id
       WHERE sm.user_id = ?
       ORDER BY s.created_at
-    `).all(req.userId);
+    `, [req.userId]);
     res.json(servers);
   } catch (err) {
     res.status(500).json({ error: 'Internal server error' });
@@ -112,30 +110,30 @@ router.get('/', authenticate, (req, res) => {
 });
 
 // Get server by ID (with full data)
-router.get('/:serverId', authenticate, (req, res) => {
+router.get('/:serverId', authenticate, async (req, res) => {
   try {
     const { serverId } = req.params;
-    const member = db.prepare('SELECT * FROM server_members WHERE server_id = ? AND user_id = ?').get(serverId, req.userId);
+    const member = await db.get('SELECT * FROM server_members WHERE server_id = ? AND user_id = ?', [serverId, req.userId]);
     if (!member) return res.status(403).json({ error: 'You are not a member of this server' });
 
-    const server = db.prepare('SELECT * FROM servers WHERE id = ?').get(serverId);
+    const server = await db.get('SELECT * FROM servers WHERE id = ?', [serverId]);
     if (!server) return res.status(404).json({ error: 'Server not found' });
 
-    const channels = db.prepare('SELECT * FROM channels WHERE server_id = ? ORDER BY position').all(serverId);
-    const categories = db.prepare('SELECT * FROM channel_categories WHERE server_id = ? ORDER BY position').all(serverId);
-    const roles = db.prepare('SELECT * FROM roles WHERE server_id = ? ORDER BY position DESC').all(serverId);
-    const members = db.prepare(`
+    const channels = await db.all('SELECT * FROM channels WHERE server_id = ? ORDER BY position', [serverId]);
+    const categories = await db.all('SELECT * FROM channel_categories WHERE server_id = ? ORDER BY position', [serverId]);
+    const roles = await db.all('SELECT * FROM roles WHERE server_id = ? ORDER BY position DESC', [serverId]);
+    const members = await db.all(`
       SELECT u.id, u.username, u.discriminator, u.avatar, u.status, u.custom_status,
              sm.nickname, sm.joined_at, sm.muted, sm.deafened
       FROM server_members sm
       INNER JOIN users u ON u.id = sm.user_id
       WHERE sm.server_id = ?
-    `).all(serverId);
+    `, [serverId]);
 
     // Get member roles
     for (const m of members) {
-      m.roles = db.prepare('SELECT role_id FROM member_roles WHERE server_id = ? AND user_id = ?')
-        .all(serverId, m.id).map(r => r.role_id);
+      const memberRoles = await db.all('SELECT role_id FROM member_roles WHERE server_id = ? AND user_id = ?', [serverId, m.id]);
+      m.roles = memberRoles.map(r => r.role_id);
     }
 
     res.json({ ...server, channels, categories, roles, members });
@@ -146,10 +144,10 @@ router.get('/:serverId', authenticate, (req, res) => {
 });
 
 // Update server
-router.patch('/:serverId', authenticate, (req, res) => {
+router.patch('/:serverId', authenticate, async (req, res) => {
   try {
     const { serverId } = req.params;
-    if (!checkPermission(db, req.userId, serverId, null, PERMISSIONS.MANAGE_SERVER)) {
+    if (!await checkPermission(db, req.userId, serverId, null, PERMISSIONS.MANAGE_SERVER)) {
       return res.status(403).json({ error: 'Missing MANAGE_SERVER permission' });
     }
 
@@ -168,8 +166,8 @@ router.patch('/:serverId', authenticate, (req, res) => {
     updates.push('updated_at = CURRENT_TIMESTAMP');
     values.push(serverId);
 
-    db.prepare(`UPDATE servers SET ${updates.join(', ')} WHERE id = ?`).run(...values);
-    const server = db.prepare('SELECT * FROM servers WHERE id = ?').get(serverId);
+    await db.run(`UPDATE servers SET ${updates.join(', ')} WHERE id = ?`, values);
+    const server = await db.get('SELECT * FROM servers WHERE id = ?', [serverId]);
     res.json(server);
   } catch (err) {
     res.status(500).json({ error: 'Internal server error' });
@@ -177,16 +175,16 @@ router.patch('/:serverId', authenticate, (req, res) => {
 });
 
 // Delete server
-router.delete('/:serverId', authenticate, (req, res) => {
+router.delete('/:serverId', authenticate, async (req, res) => {
   try {
     const { serverId } = req.params;
-    const server = db.prepare('SELECT * FROM servers WHERE id = ?').get(serverId);
+    const server = await db.get('SELECT * FROM servers WHERE id = ?', [serverId]);
     if (!server) return res.status(404).json({ error: 'Server not found' });
     if (server.owner_id !== req.userId) {
       return res.status(403).json({ error: 'Only the server owner can delete the server' });
     }
 
-    db.prepare('DELETE FROM servers WHERE id = ?').run(serverId);
+    await db.run('DELETE FROM servers WHERE id = ?', [serverId]);
     res.json({ deleted: true });
   } catch (err) {
     res.status(500).json({ error: 'Internal server error' });
@@ -194,16 +192,16 @@ router.delete('/:serverId', authenticate, (req, res) => {
 });
 
 // Upload server icon
-router.post('/:serverId/icon', authenticate, iconUpload.single('icon'), (req, res) => {
+router.post('/:serverId/icon', authenticate, iconUpload.single('icon'), async (req, res) => {
   try {
     const { serverId } = req.params;
-    if (!checkPermission(db, req.userId, serverId, null, PERMISSIONS.MANAGE_SERVER)) {
+    if (!await checkPermission(db, req.userId, serverId, null, PERMISSIONS.MANAGE_SERVER)) {
       return res.status(403).json({ error: 'Missing MANAGE_SERVER permission' });
     }
     if (!req.file) return res.status(400).json({ error: 'No image provided' });
     const iconUrl = `/uploads/icons/${req.file.filename}`;
-    db.prepare('UPDATE servers SET icon = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(iconUrl, serverId);
-    const server = db.prepare('SELECT * FROM servers WHERE id = ?').get(serverId);
+    await db.run('UPDATE servers SET icon = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [iconUrl, serverId]);
+    const server = await db.get('SELECT * FROM servers WHERE id = ?', [serverId]);
     res.json(server);
   } catch (err) {
     console.error('Server icon upload error:', err);
@@ -212,16 +210,16 @@ router.post('/:serverId/icon', authenticate, iconUpload.single('icon'), (req, re
 });
 
 // Leave server
-router.delete('/:serverId/members/@me', authenticate, (req, res) => {
+router.delete('/:serverId/members/@me', authenticate, async (req, res) => {
   try {
     const { serverId } = req.params;
-    const server = db.prepare('SELECT owner_id FROM servers WHERE id = ?').get(serverId);
+    const server = await db.get('SELECT owner_id FROM servers WHERE id = ?', [serverId]);
     if (!server) return res.status(404).json({ error: 'Server not found' });
     if (server.owner_id === req.userId) {
       return res.status(400).json({ error: 'Server owner cannot leave. Transfer ownership or delete the server.' });
     }
 
-    db.prepare('DELETE FROM server_members WHERE server_id = ? AND user_id = ?').run(serverId, req.userId);
+    await db.run('DELETE FROM server_members WHERE server_id = ? AND user_id = ?', [serverId, req.userId]);
     res.json({ left: true });
   } catch (err) {
     res.status(500).json({ error: 'Internal server error' });
