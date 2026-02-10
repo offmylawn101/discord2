@@ -4,6 +4,7 @@ import { useStore } from '../store';
 import { onConnectionStateChange } from '../utils/socket';
 import { getSocket } from '../utils/socket';
 import { requestNotificationPermission } from '../utils/notifications';
+import { startIdleDetection, setIdlePreviousStatus } from '../utils/idle';
 import ServerList from './ServerList';
 import Sidebar from './Sidebar';
 import ChatArea from './ChatArea';
@@ -62,6 +63,32 @@ export default function MainLayout() {
   // Request notification permission on mount
   useEffect(() => {
     requestNotificationPermission();
+  }, []);
+
+  // Auto-idle detection
+  useEffect(() => {
+    const cleanup = startIdleDetection((idle) => {
+      const socket = getSocket();
+      const state = useStore.getState();
+      if (!socket || !state.user) return;
+
+      if (idle) {
+        // Store current status and switch to idle
+        const currentStatus = state.user.status;
+        if (currentStatus === 'online') {
+          setIdlePreviousStatus(currentStatus);
+          socket.emit('status_change', 'idle');
+          useStore.setState({ user: { ...state.user, status: 'idle' } });
+        }
+      } else {
+        // Restore previous status
+        const prevStatus = state.user.status === 'idle' ? 'online' : state.user.status;
+        socket.emit('status_change', prevStatus);
+        useStore.setState({ user: { ...state.user, status: prevStatus } });
+      }
+    });
+
+    return cleanup;
   }, []);
 
   useEffect(() => {
