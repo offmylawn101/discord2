@@ -222,6 +222,52 @@ router.post('/:channelId/messages', authenticate, messageLimiter, upload.array('
       `, [message.reply_to_id]);
     }
 
+    // Parse mentions and update mention counts
+    const mentionedUserIds = new Set();
+
+    // @everyone and @here
+    if (content && (content.includes('@everyone') || content.includes('@here'))) {
+      if (channel.server_id) {
+        const serverMembers = await db.all('SELECT user_id FROM server_members WHERE server_id = ?', [channel.server_id]);
+        for (const m of serverMembers) {
+          if (m.user_id !== req.userId) mentionedUserIds.add(m.user_id);
+        }
+      }
+    }
+
+    // @username mentions - match <@userId> pattern
+    const userMentionRegex = /<@([a-f0-9-]+)>/g;
+    let match;
+    while ((match = userMentionRegex.exec(content || '')) !== null) {
+      if (match[1] !== req.userId) mentionedUserIds.add(match[1]);
+    }
+
+    // @role mentions - match <@&roleId> pattern
+    const roleMentionRegex = /<@&([a-f0-9-]+)>/g;
+    while ((match = roleMentionRegex.exec(content || '')) !== null) {
+      if (channel.server_id) {
+        const roleMembers = await db.all(
+          'SELECT user_id FROM member_roles WHERE server_id = ? AND role_id = ?',
+          [channel.server_id, match[1]]
+        );
+        for (const m of roleMembers) {
+          if (m.user_id !== req.userId) mentionedUserIds.add(m.user_id);
+        }
+      }
+    }
+
+    // Update mention counts in read_states
+    for (const uid of mentionedUserIds) {
+      await db.run(`
+        INSERT INTO read_states (user_id, channel_id, mention_count)
+        VALUES (?, ?, 1)
+        ON CONFLICT(user_id, channel_id) DO UPDATE SET mention_count = mention_count + 1
+      `, [uid, channelId]);
+    }
+
+    // Add mentions array to the message response
+    message.mentions = Array.from(mentionedUserIds);
+
     res.status(201).json(message);
   } catch (err) {
     console.error('Send message error:', err);
