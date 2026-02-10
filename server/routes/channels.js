@@ -3,6 +3,7 @@ const { v4: uuidv4 } = require('uuid');
 const db = require('../models/database');
 const { authenticate } = require('../middleware/auth');
 const { PERMISSIONS, checkPermission } = require('../utils/permissions');
+const cache = require('../utils/cache');
 
 const router = express.Router();
 
@@ -37,6 +38,7 @@ router.post('/:serverId/channels', authenticate, async (req, res) => {
         topic || '', slowmode || 0, nsfw ? 1 : 0, bitrate || 64000, user_limit || 0]);
 
     const channel = await db.get('SELECT * FROM channels WHERE id = ?', [id]);
+    await cache.delPattern(`server:${serverId}:*`);
     res.status(201).json(channel);
   } catch (err) {
     console.error('Create channel error:', err);
@@ -100,6 +102,9 @@ router.patch('/channels/:channelId', authenticate, async (req, res) => {
     values.push(channelId);
 
     await db.run(`UPDATE channels SET ${updates.join(', ')} WHERE id = ?`, values);
+    if (channel.server_id) {
+      await cache.delPattern(`server:${channel.server_id}:*`);
+    }
     const updated = await db.get('SELECT * FROM channels WHERE id = ?', [channelId]);
     res.json(updated);
   } catch (err) {
@@ -126,6 +131,7 @@ router.patch('/:serverId/channels/reorder', authenticate, async (req, res) => {
     });
 
     const updated = await db.all('SELECT * FROM channels WHERE server_id = ? ORDER BY position', [serverId]);
+    await cache.delPattern(`server:${serverId}:*`);
     res.json(updated);
   } catch (err) {
     console.error('Channel reorder error:', err);
@@ -147,6 +153,9 @@ router.delete('/channels/:channelId', authenticate, async (req, res) => {
     }
 
     await db.run('DELETE FROM channels WHERE id = ?', [channelId]);
+    if (channel.server_id) {
+      await cache.delPattern(`server:${channel.server_id}:*`);
+    }
     res.json({ deleted: true });
   } catch (err) {
     res.status(500).json({ error: 'Internal server error' });
