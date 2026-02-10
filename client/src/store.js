@@ -940,6 +940,26 @@ export const useStore = create((set, get) => ({
     return server;
   },
 
+  // Server banner upload
+  uploadServerBanner: async (serverId, file) => {
+    const formData = new FormData();
+    formData.append('banner', file);
+    const result = await api.upload(`/servers/${serverId}/banner`, formData);
+    set(s => ({
+      servers: s.servers.map(sv => sv.id === serverId ? { ...sv, banner: result.banner } : sv),
+      currentServer: s.currentServer?.id === serverId ? { ...s.currentServer, banner: result.banner } : s.currentServer,
+    }));
+    return result;
+  },
+
+  removeServerBanner: async (serverId) => {
+    await api.delete(`/servers/${serverId}/banner`);
+    set(s => ({
+      servers: s.servers.map(sv => sv.id === serverId ? { ...sv, banner: null } : sv),
+      currentServer: s.currentServer?.id === serverId ? { ...s.currentServer, banner: null } : s.currentServer,
+    }));
+  },
+
   // Emoji actions
   uploadEmoji: async (serverId, name, file) => {
     const formData = new FormData();

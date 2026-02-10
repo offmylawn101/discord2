@@ -7,6 +7,7 @@ export default function ServerSettings() {
   const {
     currentServer, toggleServerSettings, roles, channels, categories,
     createChannel, createRole, updateRole, selectServer, uploadServerIcon,
+    uploadServerBanner, removeServerBanner,
   } = useStore();
   const [tab, setTab] = useState('overview');
   const [serverName, setServerName] = useState(currentServer?.name || '');
@@ -18,6 +19,7 @@ export default function ServerSettings() {
   const [selectedRole, setSelectedRole] = useState(null);
   const [rolePerms, setRolePerms] = useState({});
   const [uploadingIcon, setUploadingIcon] = useState(false);
+  const [uploadingBanner, setUploadingBanner] = useState(false);
   const [isPublic, setIsPublic] = useState(!!currentServer?.is_public);
   const [serverDescription, setServerDescription] = useState(currentServer?.description || '');
   const iconInputRef = useRef(null);
@@ -43,6 +45,29 @@ export default function ServerSettings() {
     }
     setUploadingIcon(false);
     e.target.value = '';
+  };
+
+  const handleBannerUpload = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploadingBanner(true);
+    try {
+      await uploadServerBanner(currentServer.id, file);
+      selectServer(currentServer.id);
+    } catch (err) {
+      console.error('Banner upload error:', err);
+    }
+    setUploadingBanner(false);
+    e.target.value = '';
+  };
+
+  const handleRemoveBanner = async () => {
+    try {
+      await removeServerBanner(currentServer.id);
+      selectServer(currentServer.id);
+    } catch (err) {
+      console.error('Banner remove error:', err);
+    }
   };
 
   const handleCreateChannel = async () => {
@@ -153,6 +178,29 @@ export default function ServerSettings() {
                 </div>
               </div>
             </div>
+
+            {/* Server Banner */}
+            <div className="form-group" style={{ marginBottom: 24 }}>
+              <label className="form-label">Server Banner</label>
+              {currentServer?.banner ? (
+                <div className="server-banner-preview">
+                  <img src={currentServer.banner} alt="Server banner" />
+                  <div className="banner-actions">
+                    <label className="btn btn-secondary" style={{ cursor: 'pointer' }}>
+                      {uploadingBanner ? 'Uploading...' : 'Change Banner'}
+                      <input type="file" accept="image/*" hidden onChange={handleBannerUpload} />
+                    </label>
+                    <button className="btn btn-danger" onClick={handleRemoveBanner}>Remove</button>
+                  </div>
+                </div>
+              ) : (
+                <label className="btn btn-secondary" style={{ cursor: 'pointer', display: 'inline-block' }}>
+                  {uploadingBanner ? 'Uploading...' : 'Upload Banner'}
+                  <input type="file" accept="image/*" hidden onChange={handleBannerUpload} />
+                </label>
+              )}
+            </div>
+
             {/* Server Description */}
             <div className="form-group" style={{ marginBottom: 24 }}>
               <label className="form-label">Server Description</label>

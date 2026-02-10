@@ -2932,3 +2932,119 @@ kbd { padding: 2px 8px; background: var(--bg-tertiary); border-radius: 4px; font
   text-transform: uppercase;
   flex-shrink: 0;
 }
+
+/* Date Separator */
+.date-separator {
+  display: flex;
+  align-items: center;
+  margin: 16px 16px 4px;
+  gap: 8px;
+}
+
+.date-separator::before,
+.date-separator::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--bg-modifier-active);
+}
+
+.date-separator span {
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  flex-shrink: 0;
+  padding: 2px 4px;
+}
+
+/* Message Jump Highlight */
+.message-highlighted {
+  background: rgba(250, 166, 26, 0.1) !important;
+  animation: messageHighlight 2s ease;
+}
+
+@keyframes messageHighlight {
+  0% { background: rgba(250, 166, 26, 0.2); }
+  70% { background: rgba(250, 166, 26, 0.15); }
+  100% { background: transparent; }
+}
+
+/* Slowmode */
+.slowmode-badge {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  background: var(--bg-tertiary);
+  border-radius: 4px;
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-left: 8px;
+  flex-shrink: 0;
+}
+
+.slowmode-countdown {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  color: #FAA61A;
+  font-size: 13px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.message-input-wrapper textarea:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Reply reference hover */
+.message-reply-ref:hover {
+  background: var(--bg-modifier-hover);
+  border-radius: 3px;
+}
+
+/* Server Banner */
+.server-banner {
+  width: 100%;
+  height: 120px;
+  overflow: hidden;
+  position: relative;
+  flex-shrink: 0;
+}
+
+.server-banner img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.server-banner + .sidebar-header {
+  margin-top: -32px;
+  position: relative;
+  z-index: 1;
+  background: linear-gradient(transparent, var(--bg-secondary) 80%);
+  padding-top: 12px;
+}
+
+/* Server Settings Banner Preview */
+.server-banner-preview {
+  width: 100%;
+  max-width: 320px;
+  border-radius: 8px;
+  overflow: hidden;
+  margin-bottom: 8px;
+}
+
+.server-banner-preview img {
+  width: 100%;
+  height: 120px;
+  object-fit: cover;
+}
+
+.banner-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}

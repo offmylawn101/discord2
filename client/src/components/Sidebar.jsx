@@ -366,6 +366,11 @@ export default function Sidebar({ isHome }) {
 
   return (
     <div className="sidebar">
+      {currentServer?.banner && (
+        <div className="server-banner">
+          <img src={currentServer.banner} alt="" />
+        </div>
+      )}
       <div
         className="sidebar-header"
         onClick={toggleServerSettings}

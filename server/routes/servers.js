@@ -235,6 +235,77 @@ router.delete('/:serverId', authenticate, async (req, res) => {
   }
 });
 
+// Server banner upload setup
+const bannerDir = path.join(__dirname, '..', '..', 'uploads', 'banners');
+if (!fs.existsSync(bannerDir)) fs.mkdirSync(bannerDir, { recursive: true });
+
+const bannerStorage = multer.diskStorage({
+  destination: bannerDir,
+  filename: (req, file, cb) => cb(null, `banner-${req.params.serverId}-${Date.now()}${path.extname(file.originalname)}`),
+});
+const bannerUpload = multer({
+  storage: bannerStorage,
+  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype.startsWith('image/')) cb(null, true);
+    else cb(new Error('Only images are allowed'));
+  },
+});
+
+// Upload server banner
+router.post('/:serverId/banner', authenticate, (req, res, next) => {
+  bannerUpload.single('banner')(req, res, async (err) => {
+    if (err) return res.status(400).json({ error: err.message });
+
+    try {
+      const { serverId } = req.params;
+      const server = await db.get('SELECT * FROM servers WHERE id = ?', [serverId]);
+      if (!server) return res.status(404).json({ error: 'Server not found' });
+      if (server.owner_id !== req.userId) return res.status(403).json({ error: 'Only the server owner can upload a banner' });
+      if (!req.file) return res.status(400).json({ error: 'No image provided' });
+
+      const bannerUrl = `/uploads/banners/${req.file.filename}`;
+      await db.run('UPDATE servers SET banner = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [bannerUrl, serverId]);
+      await cache.del(`server:${serverId}:detail`);
+
+      const io = req.app.get('io');
+      if (io) io.to(`server:${serverId}`).emit('server_update', { id: serverId, banner: bannerUrl });
+
+      res.json({ banner: bannerUrl });
+    } catch (err) {
+      console.error('Server banner upload error:', err);
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+});
+
+// Delete server banner
+router.delete('/:serverId/banner', authenticate, async (req, res) => {
+  try {
+    const { serverId } = req.params;
+    const server = await db.get('SELECT * FROM servers WHERE id = ?', [serverId]);
+    if (!server) return res.status(404).json({ error: 'Server not found' });
+    if (server.owner_id !== req.userId) return res.status(403).json({ error: 'Only the server owner can remove the banner' });
+
+    // Delete the old banner file if it exists
+    if (server.banner) {
+      const filePath = path.join(__dirname, '..', '..', server.banner);
+      if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    }
+
+    await db.run('UPDATE servers SET banner = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [serverId]);
+    await cache.del(`server:${serverId}:detail`);
+
+    const io = req.app.get('io');
+    if (io) io.to(`server:${serverId}`).emit('server_update', { id: serverId, banner: null });
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Server banner delete error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // Upload server icon
 router.post('/:serverId/icon', authenticate, iconUpload.single('icon'), async (req, res) => {
   try {

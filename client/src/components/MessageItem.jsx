@@ -12,6 +12,7 @@ export default function MessageItem({
   message, showHeader, isEditing, editContent, setEditContent,
   onEditSave, onEditCancel, onEdit, onReply, currentUserId,
   bulkSelectMode, isSelected, onMessageSelect,
+  onJumpToMessage, isHighlighted,
 }) {
   const [showEmoji, setShowEmoji] = useState(false);
   const [showProfile, setShowProfile] = useState(null);
@@ -171,7 +172,8 @@ export default function MessageItem({
 
   return (
     <div
-      className={`message-group ${showHeader ? 'has-header' : ''} ${bulkSelectMode ? 'bulk-select-active' : ''} ${isSelected ? 'bulk-selected' : ''}`}
+      id={`message-${message.id}`}
+      className={`message-group ${showHeader ? 'has-header' : ''} ${bulkSelectMode ? 'bulk-select-active' : ''} ${isSelected ? 'bulk-selected' : ''} ${isHighlighted ? 'message-highlighted' : ''}`}
       data-message-id={message.id}
       onContextMenu={handleContextMenu}
       onClick={handleBulkClick}
@@ -216,7 +218,7 @@ export default function MessageItem({
       <div className="message-body">
         {/* Reply reference */}
         {message.referenced_message && (
-          <div className="message-reply-ref">
+          <div className="message-reply-ref" onClick={() => onJumpToMessage?.(message.referenced_message.id)} style={{ cursor: 'pointer' }}>
             <span style={{ fontSize: 16 }}>↩</span>
             <div style={{
               width: 16, height: 16, borderRadius: '50%', flexShrink: 0,

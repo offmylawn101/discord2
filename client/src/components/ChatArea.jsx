@@ -7,6 +7,20 @@ import SearchBar from './SearchBar';
 import PinnedMessages from './PinnedMessages';
 import GifPicker from './GifPicker';
 
+function getDateLabel(dateStr) {
+  const date = new Date(dateStr);
+  const today = new Date();
+  const yesterday = new Date(today);
+  yesterday.setDate(yesterday.getDate() - 1);
+
+  const isToday = date.toDateString() === today.toDateString();
+  const isYesterday = date.toDateString() === yesterday.toDateString();
+
+  if (isToday) return 'Today';
+  if (isYesterday) return 'Yesterday';
+  return date.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+}
+
 export default function ChatArea() {
   const {
     currentChannel, messages, loadingMessages, sendMessage,
@@ -31,11 +45,15 @@ export default function ChatArea() {
   const mentionStartPos = useRef(null);
   const [bulkDeleting, setBulkDeleting] = useState(false);
   const [showGifPicker, setShowGifPicker] = useState(false);
+  const [slowmodeRemaining, setSlowmodeRemaining] = useState(0);
+  const slowmodeInterval = useRef(null);
+  const [highlightedMessageId, setHighlightedMessageId] = useState(null);
   const messagesEndRef = useRef(null);
   const messagesAreaRef = useRef(null);
   const fileInputRef = useRef(null);
   const textareaRef = useRef(null);
   const typingTimeout = useRef(null);
+  const highlightTimeout = useRef(null);
   const isAtBottom = useRef(true);
   const lastClickedIndex = useRef(null);
 
@@ -56,6 +74,36 @@ export default function ChatArea() {
     }
     return false;
   })();
+
+  // Slowmode: check if user bypasses (server owner or has MANAGE_MESSAGES/ADMINISTRATOR)
+  const bypassesSlowmode = canManageMessages;
+
+  const startSlowmodeTimer = (seconds) => {
+    const duration = seconds ?? currentChannel?.slowmode;
+    if (!duration || duration <= 0 || bypassesSlowmode) return;
+    setSlowmodeRemaining(duration);
+    clearInterval(slowmodeInterval.current);
+    slowmodeInterval.current = setInterval(() => {
+      setSlowmodeRemaining(prev => {
+        if (prev <= 1) {
+          clearInterval(slowmodeInterval.current);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+  };
+
+  // Cleanup slowmode interval on unmount
+  useEffect(() => {
+    return () => clearInterval(slowmodeInterval.current);
+  }, []);
+
+  // Reset slowmode on channel change
+  useEffect(() => {
+    setSlowmodeRemaining(0);
+    clearInterval(slowmodeInterval.current);
+  }, [currentChannel?.id]);
 
   const handleBulkDelete = async () => {
     if (selectedMessages.size === 0 || bulkDeleting) return;
@@ -92,6 +140,22 @@ export default function ChatArea() {
     if (messagesEndRef.current) {
       messagesEndRef.current.scrollIntoView({ behavior: smooth ? 'smooth' : 'instant' });
     }
+  }, []);
+
+  // Jump to a specific message by ID (for reply references)
+  const jumpToMessage = useCallback((messageId) => {
+    const el = document.getElementById(`message-${messageId}`);
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      setHighlightedMessageId(messageId);
+      clearTimeout(highlightTimeout.current);
+      highlightTimeout.current = setTimeout(() => setHighlightedMessageId(null), 2000);
+    }
+  }, []);
+
+  // Cleanup highlight timeout
+  useEffect(() => {
+    return () => clearTimeout(highlightTimeout.current);
   }, []);
 
   // Auto-scroll on new messages if we're at bottom
@@ -173,6 +237,11 @@ export default function ChatArea() {
   const handleSend = async () => {
     const trimmed = content.trim();
     if (!trimmed && files.length === 0) return;
+    if (slowmodeRemaining > 0) return;
+
+    const savedContent = content;
+    const savedFiles = [...files];
+    const savedReplyingTo = replyingTo;
 
     setContent('');
     setFiles([]);
@@ -183,14 +252,27 @@ export default function ChatArea() {
     const processedContent = convertEmojiShortcodes(trimmed);
 
     try {
-      const msg = await sendMessage(currentChannel.id, processedContent, files.length > 0 ? files : null, replyingTo?.id);
+      const msg = await sendMessage(currentChannel.id, processedContent, savedFiles.length > 0 ? savedFiles : null, savedReplyingTo?.id);
       // Optimistically add to local state immediately
       useStore.getState().addMessage(msg);
       // Broadcast to other users via socket
       const socket = getSocket();
       socket?.emit('message_create', msg);
+      // Start slowmode countdown after successful send
+      startSlowmodeTimer();
     } catch (err) {
       console.error('Send message error:', err);
+      // Handle slowmode 429 error - parse remaining seconds and start timer
+      if (err?.message?.includes('Slowmode')) {
+        const match = err.message.match(/wait (\d+)s/);
+        if (match) {
+          startSlowmodeTimer(parseInt(match[1]));
+        }
+        // Restore the content so the user doesn't lose their message
+        setContent(savedContent);
+        setFiles(savedFiles);
+        setReplyingTo(savedReplyingTo);
+      }
     }
   };
 
@@ -576,6 +658,14 @@ export default function ChatArea() {
         </span>
         <span className="name">{channelName}</span>
         {currentChannel?.topic && <span className="topic">{currentChannel.topic}</span>}
+        {currentChannel?.slowmode > 0 && !bypassesSlowmode && (
+          <div className="slowmode-badge" title={`Slowmode: ${currentChannel.slowmode}s`}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67V7z"/>
+            </svg>
+            <span>{currentChannel.slowmode}s</span>
+          </div>
+        )}
         <div className="header-icons">
           {currentChannel?.server_id && canManageMessages && (
             <div
@@ -684,11 +774,17 @@ export default function ChatArea() {
         ) : (
           groupedMessages.map((msg, idx) => {
             const prevMsg = idx > 0 ? groupedMessages[idx - 1] : null;
+            const showDateSep = !prevMsg || new Date(msg.created_at).toDateString() !== new Date(prevMsg.created_at).toDateString();
             const showUnreadSeparator = lastReadMessageId
               && prevMsg?.id === lastReadMessageId
               && msg.id !== lastReadMessageId;
             return (
               <React.Fragment key={msg.id}>
+                {showDateSep && (
+                  <div className="date-separator">
+                    <span>{getDateLabel(msg.created_at)}</span>
+                  </div>
+                )}
                 {showUnreadSeparator && (
                   <div className="unread-separator">
                     <span>NEW</span>
@@ -708,6 +804,8 @@ export default function ChatArea() {
                   bulkSelectMode={bulkSelectMode}
                   isSelected={selectedMessages.has(msg.id)}
                   onMessageSelect={handleMessageSelect}
+                  onJumpToMessage={jumpToMessage}
+                  isHighlighted={highlightedMessageId === msg.id}
                 />
               </React.Fragment>
             );
@@ -841,13 +939,22 @@ export default function ChatArea() {
           <textarea
             ref={textareaRef}
             className="message-input"
-            placeholder={`Message ${currentChannel?.type === 'dm' ? '@' : '#'}${channelName}`}
+            placeholder={slowmodeRemaining > 0 ? `Slowmode: ${slowmodeRemaining}s remaining...` : `Message ${currentChannel?.type === 'dm' ? '@' : '#'}${channelName}`}
             value={content}
             onChange={handleContentChange}
             onKeyDown={handleKeyDown}
             onPaste={handlePaste}
             rows={1}
+            disabled={slowmodeRemaining > 0}
           />
+          {slowmodeRemaining > 0 && (
+            <div className="slowmode-countdown">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67V7z"/>
+              </svg>
+              <span>{slowmodeRemaining}s</span>
+            </div>
+          )}
           <button
             className="emoji-btn gif-btn"
             onClick={() => setShowGifPicker(!showGifPicker)}
