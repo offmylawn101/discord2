@@ -1,7 +1,17 @@
 import React from 'react';
+import { useStore } from '../store';
 
 // Discord-like markdown parser
 // Supports: **bold**, *italic*, ~~strikethrough~~, __underline__, `code`, ```code blocks```, ||spoiler||, > blockquote, [links](url), @mentions
+
+const mentionStyle = {
+  background: 'rgba(88, 101, 242, 0.3)',
+  color: '#dee0fc',
+  padding: '0 2px',
+  borderRadius: 3,
+  cursor: 'pointer',
+  fontWeight: 500,
+};
 
 const RULES = [
   // Code blocks (must come first to avoid processing inside them)
@@ -154,6 +164,24 @@ function renderInline(text) {
     { regex: /~~(.+?)~~/, render: (m) => <del key={`s-${keyCounter++}`}>{m[1]}</del> },
     // Spoiler
     { regex: /\|\|(.+?)\|\|/, render: (m) => <span key={`sp-${keyCounter++}`} className="md-spoiler" onClick={e => e.currentTarget.classList.toggle('revealed')}>{m[1]}</span> },
+    // User mentions <@userId>
+    { regex: /<@([a-f0-9-]+)>/, render: (m) => {
+      const state = useStore.getState();
+      const member = state.members.find(u => u.id === m[1]);
+      const name = member?.nickname || member?.username || 'Unknown User';
+      return <span key={`mention-${keyCounter++}`} style={mentionStyle}>@{name}</span>;
+    }},
+    // Role mentions <@&roleId>
+    { regex: /<@&([a-f0-9-]+)>/, render: (m) => {
+      const state = useStore.getState();
+      const role = state.roles.find(r => r.id === m[1]);
+      const name = role?.name || 'Unknown Role';
+      return <span key={`rmention-${keyCounter++}`} style={mentionStyle}>@{name}</span>;
+    }},
+    // @everyone
+    { regex: /@everyone/, render: (m) => <span key={`everyone-${keyCounter++}`} style={mentionStyle}>@everyone</span> },
+    // @here
+    { regex: /@here/, render: (m) => <span key={`here-${keyCounter++}`} style={mentionStyle}>@here</span> },
     // Named links
     { regex: /\[([^\]]+)\]\(([^)]+)\)/, render: (m) => <a key={`l-${keyCounter++}`} href={m[2]} target="_blank" rel="noopener noreferrer" className="md-link">{m[1]}</a> },
     // Auto-links
