@@ -21,6 +21,11 @@ export const useStore = create((set, get) => ({
   messages: [],
   loadingMessages: false,
 
+  // Threads
+  activeThread: null,
+  threadMessages: [],
+  loadingThread: false,
+
   // DMs
   dmChannels: [],
   currentDm: null,
@@ -256,6 +261,52 @@ export const useStore = create((set, get) => ({
     set(s => ({
       messages: s.messages.filter(m => m.id !== messageId),
     }));
+  },
+
+  // Thread actions
+  openThread: async (thread) => {
+    set({ activeThread: thread, threadMessages: [], loadingThread: true });
+    const socket = getSocket();
+    socket?.emit('thread_join', thread.id);
+    try {
+      const messages = await api.get(`/threads/${thread.id}/messages`);
+      set({ threadMessages: messages, loadingThread: false });
+    } catch {
+      set({ loadingThread: false });
+    }
+  },
+
+  closeThread: () => {
+    const thread = get().activeThread;
+    if (thread) {
+      const socket = getSocket();
+      socket?.emit('thread_leave', thread.id);
+    }
+    set({ activeThread: null, threadMessages: [] });
+  },
+
+  createThread: async (channelId, messageId, name) => {
+    const thread = await api.post(`/${channelId}/messages/${messageId}/threads`, { name });
+    set({ activeThread: thread, threadMessages: [], loadingThread: false });
+    const socket = getSocket();
+    socket?.emit('thread_join', thread.id);
+    return thread;
+  },
+
+  sendThreadMessage: async (threadId, content) => {
+    const msg = await api.post(`/threads/${threadId}/messages`, { content });
+    set(s => ({
+      threadMessages: [...s.threadMessages, msg],
+    }));
+    return msg;
+  },
+
+  addThreadMessage: (message) => {
+    set(s => {
+      if (s.activeThread?.id !== message.threadId) return {};
+      if (s.threadMessages.some(m => m.id === message.id)) return {};
+      return { threadMessages: [...s.threadMessages, message] };
+    });
   },
 
   // Reaction actions
