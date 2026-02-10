@@ -320,7 +320,17 @@ function ChannelItem({ channel, active, onClick, isDragging, dropTarget, onDragS
           )}
         </span>
         <span className="channel-name">{channel.name}</span>
-        {hasUnread && !active && <div className="unread-badge" />}
+        {unread?.mentions > 0 && (
+          <span style={{
+            background: '#ED4245', color: 'white', borderRadius: 8,
+            padding: '0 5px', fontSize: 11, fontWeight: 700, minWidth: 16,
+            height: 16, display: 'flex', alignItems: 'center', justifyContent: 'center',
+            marginLeft: 'auto', flexShrink: 0,
+          }}>
+            {unread.mentions}
+          </span>
+        )}
+        {hasUnread && !active && !unread?.mentions && <div className="unread-badge" />}
       </div>
       {isVoiceActive && voiceParticipants.length > 0 && (
         <div className="voice-users">
