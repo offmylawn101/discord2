@@ -1,0 +1,88 @@
+require('dotenv').config();
+const express = require('express');
+const http = require('http');
+const { Server } = require('socket.io');
+const cors = require('cors');
+const path = require('path');
+
+const { authenticate } = require('./middleware/auth');
+const { authenticateSocket } = require('./middleware/auth');
+const { setupSocketHandlers } = require('./socket/handler');
+
+const authRoutes = require('./routes/auth');
+const serverRoutes = require('./routes/servers');
+const channelRoutes = require('./routes/channels');
+const messageRoutes = require('./routes/messages');
+const roleRoutes = require('./routes/roles');
+const inviteRoutes = require('./routes/invites');
+const dmRoutes = require('./routes/dms');
+const relationshipRoutes = require('./routes/relationships');
+
+const app = express();
+const server = http.createServer(app);
+const io = new Server(server, {
+  cors: {
+    origin: process.env.CLIENT_URL || 'http://localhost:5173',
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
+    credentials: true,
+  },
+});
+
+// Middleware
+app.use(cors({
+  origin: process.env.CLIENT_URL || 'http://localhost:5173',
+  credentials: true,
+}));
+app.use(express.json());
+app.use('/uploads', express.static(path.join(__dirname, '..', 'uploads')));
+
+// Serve client build in production
+app.use(express.static(path.join(__dirname, '..', 'client', 'dist')));
+
+// Routes
+app.use('/api/auth', authRoutes);
+app.use('/api/servers', authenticate, serverRoutes);
+app.use('/api/servers', authenticate, channelRoutes);
+app.use('/api/servers', authenticate, roleRoutes);
+app.use('/api/servers', authenticate, inviteRoutes);
+app.use('/api', authenticate, channelRoutes); // For /api/channels/:id routes
+app.use('/api', authenticate, messageRoutes); // For /api/:channelId/messages
+app.use('/api', authenticate, inviteRoutes);  // For /api/invites/:code
+app.use('/api/dms', authenticate, dmRoutes);
+app.use('/api/relationships', authenticate, relationshipRoutes);
+
+// Users search
+const db = require('./models/database');
+app.get('/api/users/search', authenticate, (req, res) => {
+  const { q } = req.query;
+  if (!q || q.length < 1) return res.json([]);
+  const users = db.prepare(`
+    SELECT id, username, discriminator, avatar, status
+    FROM users WHERE username LIKE ? LIMIT 20
+  `).all(`%${q}%`);
+  res.json(users);
+});
+
+// Get user by ID
+app.get('/api/users/:userId', authenticate, (req, res) => {
+  const user = db.prepare('SELECT id, username, discriminator, avatar, status, banner_color, about_me, custom_status, created_at FROM users WHERE id = ?').get(req.params.userId);
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  res.json(user);
+});
+
+// Catch all - serve client
+app.get('/{*path}', (req, res) => {
+  res.sendFile(path.join(__dirname, '..', 'client', 'dist', 'index.html'));
+});
+
+// Socket.IO
+io.use(authenticateSocket);
+setupSocketHandlers(io);
+
+// Make io accessible to routes
+app.set('io', io);
+
+const PORT = process.env.PORT || 3001;
+server.listen(PORT, () => {
+  console.log(`Discord2 server running on port ${PORT}`);
+});
