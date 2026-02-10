@@ -98,6 +98,17 @@ export default function ChatArea() {
     setLoadingMore(false);
   };
 
+  // Convert :emojiName: shortcodes to <:emojiName:emojiId> format
+  const convertEmojiShortcodes = (text) => {
+    const emojis = useStore.getState().serverEmojis || [];
+    if (emojis.length === 0) return text;
+    return text.replace(/:([a-zA-Z0-9_]{2,32}):/g, (match, name) => {
+      const emoji = emojis.find(e => e.name === name);
+      if (emoji) return `<:${emoji.name}:${emoji.id}>`;
+      return match;
+    });
+  };
+
   const handleSend = async () => {
     const trimmed = content.trim();
     if (!trimmed && files.length === 0) return;
@@ -107,8 +118,11 @@ export default function ChatArea() {
     setReplyingTo(null);
     textareaRef.current?.focus();
 
+    // Convert emoji shortcodes before sending
+    const processedContent = convertEmojiShortcodes(trimmed);
+
     try {
-      const msg = await sendMessage(currentChannel.id, trimmed, files.length > 0 ? files : null, replyingTo?.id);
+      const msg = await sendMessage(currentChannel.id, processedContent, files.length > 0 ? files : null, replyingTo?.id);
       // Optimistically add to local state immediately
       useStore.getState().addMessage(msg);
       // Broadcast to other users via socket
