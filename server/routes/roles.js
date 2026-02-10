@@ -4,6 +4,7 @@ const db = require('../models/database');
 const { authenticate } = require('../middleware/auth');
 const { PERMISSIONS, checkPermission } = require('../utils/permissions');
 const cache = require('../utils/cache');
+const { logAudit, AUDIT_ACTIONS } = require('../utils/auditLog');
 
 const router = express.Router();
 
@@ -28,6 +29,12 @@ router.post('/:serverId/roles', authenticate, async (req, res) => {
 
     const role = await db.get('SELECT * FROM roles WHERE id = ?', [id]);
     await cache.delPattern(`perms:*:${serverId}:*`);
+
+    await logAudit(serverId, req.userId, AUDIT_ACTIONS.ROLE_CREATE, {
+      targetType: 'role', targetId: role.id,
+      changes: { name: role.name },
+    });
+
     res.status(201).json(role);
   } catch (err) {
     console.error('Create role error:', err);
@@ -60,6 +67,11 @@ router.patch('/:serverId/roles/:roleId', authenticate, async (req, res) => {
     await db.run(`UPDATE roles SET ${updates.join(', ')} WHERE id = ? AND server_id = ?`, values);
     await cache.delPattern(`perms:*:${serverId}:*`);
 
+    await logAudit(serverId, req.userId, AUDIT_ACTIONS.ROLE_UPDATE, {
+      targetType: 'role', targetId: roleId,
+      changes: req.body,
+    });
+
     const role = await db.get('SELECT * FROM roles WHERE id = ?', [roleId]);
     res.json(role);
   } catch (err) {
@@ -81,6 +93,11 @@ router.delete('/:serverId/roles/:roleId', authenticate, async (req, res) => {
 
     await db.run('DELETE FROM roles WHERE id = ?', [roleId]);
     await cache.delPattern(`perms:*:${serverId}:*`);
+
+    await logAudit(serverId, req.userId, AUDIT_ACTIONS.ROLE_DELETE, {
+      targetType: 'role', targetId: roleId,
+    });
+
     res.json({ deleted: true });
   } catch (err) {
     res.status(500).json({ error: 'Internal server error' });
@@ -105,6 +122,11 @@ router.put('/:serverId/members/:userId/roles/:roleId', authenticate, async (req,
       [serverId, userId, roleId]);
     await cache.delPattern(`perms:*:${serverId}:*`);
 
+    await logAudit(serverId, req.userId, AUDIT_ACTIONS.MEMBER_ROLE_UPDATE, {
+      targetType: 'member', targetId: userId,
+      changes: { role_id: roleId, action: 'add' },
+    });
+
     res.json({ assigned: true });
   } catch (err) {
     res.status(500).json({ error: 'Internal server error' });
@@ -122,6 +144,11 @@ router.delete('/:serverId/members/:userId/roles/:roleId', authenticate, async (r
     await db.run('DELETE FROM member_roles WHERE server_id = ? AND user_id = ? AND role_id = ?',
       [serverId, userId, roleId]);
     await cache.delPattern(`perms:*:${serverId}:*`);
+
+    await logAudit(serverId, req.userId, AUDIT_ACTIONS.MEMBER_ROLE_UPDATE, {
+      targetType: 'member', targetId: userId,
+      changes: { role_id: roleId, action: 'remove' },
+    });
 
     res.json({ removed: true });
   } catch (err) {
@@ -175,6 +202,11 @@ router.delete('/:serverId/members/:userId', authenticate, async (req, res) => {
     }
 
     await db.run('DELETE FROM server_members WHERE server_id = ? AND user_id = ?', [serverId, userId]);
+
+    await logAudit(serverId, req.userId, AUDIT_ACTIONS.MEMBER_KICK, {
+      targetType: 'member', targetId: userId,
+    });
+
     res.json({ kicked: true });
   } catch (err) {
     res.status(500).json({ error: 'Internal server error' });
@@ -200,6 +232,11 @@ router.put('/:serverId/bans/:userId', authenticate, async (req, res) => {
       [serverId, userId, reason, req.userId]);
     await db.run('DELETE FROM server_members WHERE server_id = ? AND user_id = ?', [serverId, userId]);
 
+    await logAudit(serverId, req.userId, AUDIT_ACTIONS.MEMBER_BAN, {
+      targetType: 'member', targetId: userId,
+      changes: { reason },
+    });
+
     res.json({ banned: true });
   } catch (err) {
     res.status(500).json({ error: 'Internal server error' });
@@ -215,6 +252,11 @@ router.delete('/:serverId/bans/:userId', authenticate, async (req, res) => {
     }
 
     await db.run('DELETE FROM bans WHERE server_id = ? AND user_id = ?', [serverId, userId]);
+
+    await logAudit(serverId, req.userId, AUDIT_ACTIONS.MEMBER_UNBAN, {
+      targetType: 'member', targetId: userId,
+    });
+
     res.json({ unbanned: true });
   } catch (err) {
     res.status(500).json({ error: 'Internal server error' });
