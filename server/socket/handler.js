@@ -276,6 +276,47 @@ function setupSocketHandlers(io) {
       socket.leave(`server:${serverId}`);
     });
 
+    // --- Missed messages recovery ---
+    socket.on('request_missed_messages', async ({ since }) => {
+      if (!since) return;
+      try {
+        // Get messages from channels the user is a member of since disconnect
+        const sinceDate = new Date(since).toISOString();
+
+        // Get all server channels for user's servers
+        const serverChannels = await db.all(`
+          SELECT c.id FROM channels c
+          INNER JOIN server_members sm ON sm.server_id = c.server_id
+          WHERE sm.user_id = ? AND c.type = 'text'
+        `, [userId]);
+
+        // Get DM channels
+        const dmChannels = await db.all(`
+          SELECT channel_id as id FROM dm_members WHERE user_id = ?
+        `, [userId]);
+
+        const allChannelIds = [...serverChannels, ...dmChannels].map(c => c.id);
+        if (allChannelIds.length === 0) return;
+
+        const placeholders = allChannelIds.map(() => '?').join(',');
+        const missedMessages = await db.all(`
+          SELECT m.*, u.username, u.discriminator, u.avatar, c.server_id
+          FROM messages m
+          INNER JOIN users u ON u.id = m.author_id
+          INNER JOIN channels c ON c.id = m.channel_id
+          WHERE m.channel_id IN (${placeholders})
+            AND m.created_at > ?
+            AND m.author_id != ?
+          ORDER BY m.created_at ASC
+          LIMIT 200
+        `, [...allChannelIds, sinceDate, userId]);
+
+        socket.emit('missed_messages', { messages: missedMessages });
+      } catch (err) {
+        console.error('Missed messages error:', err);
+      }
+    });
+
     // --- Disconnect ---
 
     socket.on('disconnect', async () => {

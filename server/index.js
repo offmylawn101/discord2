@@ -29,6 +29,8 @@ const io = new Server(server, {
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
     credentials: true,
   },
+  pingTimeout: 30000,
+  pingInterval: 25000,
 });
 
 // Redis adapter for multi-process scaling
