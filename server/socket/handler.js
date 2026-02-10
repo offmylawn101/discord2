@@ -45,6 +45,15 @@ function setupSocketHandlers(io) {
       socket.leave(`channel:${channelId}`);
     });
 
+    // --- Thread events ---
+    socket.on('thread_join', (threadId) => {
+      socket.join(`thread:${threadId}`);
+    });
+
+    socket.on('thread_leave', (threadId) => {
+      socket.leave(`thread:${threadId}`);
+    });
+
     // --- Message events ---
 
     socket.on('message_create', async (message) => {
