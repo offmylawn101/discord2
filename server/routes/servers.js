@@ -5,6 +5,7 @@ const path = require('path');
 const db = require('../models/database');
 const { authenticate } = require('../middleware/auth');
 const { PERMISSIONS, DEFAULT_PERMISSIONS, checkPermission } = require('../utils/permissions');
+const cache = require('../utils/cache');
 
 const router = express.Router();
 
@@ -116,6 +117,11 @@ router.get('/:serverId', authenticate, async (req, res) => {
     const member = await db.get('SELECT * FROM server_members WHERE server_id = ? AND user_id = ?', [serverId, req.userId]);
     if (!member) return res.status(403).json({ error: 'You are not a member of this server' });
 
+    // Try cache first
+    const cacheKey = `server:${serverId}:detail`;
+    const cached = await cache.get(cacheKey);
+    if (cached) return res.json(cached);
+
     const server = await db.get('SELECT * FROM servers WHERE id = ?', [serverId]);
     if (!server) return res.status(404).json({ error: 'Server not found' });
 
@@ -136,7 +142,9 @@ router.get('/:serverId', authenticate, async (req, res) => {
       m.roles = memberRoles.map(r => r.role_id);
     }
 
-    res.json({ ...server, channels, categories, roles, members });
+    const responseData = { ...server, channels, categories, roles, members };
+    await cache.set(cacheKey, responseData, 60); // 1 minute TTL
+    res.json(responseData);
   } catch (err) {
     console.error('Get server error:', err);
     res.status(500).json({ error: 'Internal server error' });
@@ -167,6 +175,7 @@ router.patch('/:serverId', authenticate, async (req, res) => {
     values.push(serverId);
 
     await db.run(`UPDATE servers SET ${updates.join(', ')} WHERE id = ?`, values);
+    await cache.del(`server:${serverId}:detail`);
     const server = await db.get('SELECT * FROM servers WHERE id = ?', [serverId]);
     res.json(server);
   } catch (err) {
@@ -185,6 +194,7 @@ router.delete('/:serverId', authenticate, async (req, res) => {
     }
 
     await db.run('DELETE FROM servers WHERE id = ?', [serverId]);
+    await cache.del(`server:${serverId}:detail`);
     res.json({ deleted: true });
   } catch (err) {
     res.status(500).json({ error: 'Internal server error' });
@@ -201,6 +211,7 @@ router.post('/:serverId/icon', authenticate, iconUpload.single('icon'), async (r
     if (!req.file) return res.status(400).json({ error: 'No image provided' });
     const iconUrl = `/uploads/icons/${req.file.filename}`;
     await db.run('UPDATE servers SET icon = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?', [iconUrl, serverId]);
+    await cache.del(`server:${serverId}:detail`);
     const server = await db.get('SELECT * FROM servers WHERE id = ?', [serverId]);
     res.json(server);
   } catch (err) {
