@@ -94,6 +94,7 @@ export default function ServerSettings() {
         <div className="settings-nav-inner">
           <div className="settings-nav-category">{currentServer?.name}</div>
           <button className={`settings-nav-item ${tab === 'overview' ? 'active' : ''}`} onClick={() => setTab('overview')}>Overview</button>
+          <button className={`settings-nav-item ${tab === 'emoji' ? 'active' : ''}`} onClick={() => setTab('emoji')}>Emoji</button>
           <button className={`settings-nav-item ${tab === 'channels' ? 'active' : ''}`} onClick={() => setTab('channels')}>Channels</button>
           <button className={`settings-nav-item ${tab === 'roles' ? 'active' : ''}`} onClick={() => setTab('roles')}>Roles</button>
           <button className={`settings-nav-item ${tab === 'members' ? 'active' : ''}`} onClick={() => setTab('members')}>Members</button>
@@ -145,6 +146,8 @@ export default function ServerSettings() {
             <button className="btn btn-primary" onClick={handleUpdateServer}>Save Changes</button>
           </>
         )}
+
+        {tab === 'emoji' && <ServerEmojis />}
 
         {tab === 'channels' && (
           <>
@@ -269,12 +272,37 @@ export default function ServerSettings() {
 }
 
 function ServerMembers() {
-  const { members, roles, currentServer, assignRole } = useStore();
+  const { members, roles, currentServer, assignRole, setNickname } = useStore();
   const [assigningRole, setAssigningRole] = useState({});
+  const [editingNickname, setEditingNickname] = useState(null);
+  const [nicknameInput, setNicknameInput] = useState('');
 
   const handleAssignRole = async (userId, roleId) => {
     await assignRole(currentServer.id, userId, roleId);
     useStore.getState().selectServer(currentServer.id);
+  };
+
+  const handleNicknameEdit = (member) => {
+    setEditingNickname(member.id);
+    setNicknameInput(member.nickname || '');
+  };
+
+  const handleNicknameSave = async (userId) => {
+    try {
+      await setNickname(currentServer.id, userId, nicknameInput.trim() || null);
+    } catch (err) {
+      console.error('Nickname save error:', err);
+    }
+    setEditingNickname(null);
+  };
+
+  const handleNicknameKeyDown = (e, userId) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      handleNicknameSave(userId);
+    } else if (e.key === 'Escape') {
+      setEditingNickname(null);
+    }
   };
 
   return (
@@ -289,9 +317,49 @@ function ServerMembers() {
           }}>
             {m.username?.[0]?.toUpperCase()}
           </div>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontWeight: 600, color: 'var(--header-primary)', fontSize: 14 }}>{m.nickname || m.username}</div>
-            <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{m.username}#{m.discriminator}</div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            {editingNickname === m.id ? (
+              <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                <input
+                  className="form-input"
+                  value={nicknameInput}
+                  onChange={e => setNicknameInput(e.target.value)}
+                  onKeyDown={e => handleNicknameKeyDown(e, m.id)}
+                  placeholder={m.username}
+                  maxLength={32}
+                  autoFocus
+                  style={{ fontSize: 13, padding: '2px 6px', flex: 1 }}
+                />
+                <button
+                  className="btn btn-primary"
+                  onClick={() => handleNicknameSave(m.id)}
+                  style={{ fontSize: 11, padding: '2px 8px' }}
+                >
+                  Save
+                </button>
+                <button
+                  className="btn"
+                  onClick={() => setEditingNickname(null)}
+                  style={{ fontSize: 11, padding: '2px 8px', background: 'var(--bg-tertiary)' }}
+                >
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <div>
+                  <div style={{ fontWeight: 600, color: 'var(--header-primary)', fontSize: 14 }}>{m.nickname || m.username}</div>
+                  <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{m.username}#{m.discriminator}</div>
+                </div>
+                <span
+                  style={{ cursor: 'pointer', fontSize: 14, color: 'var(--text-muted)', marginLeft: 4, opacity: 0.6 }}
+                  onClick={() => handleNicknameEdit(m)}
+                  title="Edit nickname"
+                >
+                  &#9998;
+                </span>
+              </div>
+            )}
           </div>
           <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
             {m.roles?.map(rid => {
