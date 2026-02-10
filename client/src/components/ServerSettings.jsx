@@ -100,6 +100,7 @@ export default function ServerSettings() {
           <button className={`settings-nav-item ${tab === 'members' ? 'active' : ''}`} onClick={() => setTab('members')}>Members</button>
           <button className={`settings-nav-item ${tab === 'invites' ? 'active' : ''}`} onClick={() => setTab('invites')}>Invites</button>
           <button className={`settings-nav-item ${tab === 'bans' ? 'active' : ''}`} onClick={() => setTab('bans')}>Bans</button>
+          <button className={`settings-nav-item ${tab === 'events' ? 'active' : ''}`} onClick={() => setTab('events')}>Events</button>
           <button className={`settings-nav-item ${tab === 'automod' ? 'active' : ''}`} onClick={() => setTab('automod')}>AutoMod</button>
           <button className={`settings-nav-item ${tab === 'audit' ? 'active' : ''}`} onClick={() => setTab('audit')}>Audit Log</button>
         </div>
@@ -283,6 +284,7 @@ export default function ServerSettings() {
         {tab === 'members' && <ServerMembers />}
         {tab === 'invites' && <ServerInvites />}
         {tab === 'bans' && <ServerBans />}
+        {tab === 'events' && <ServerEventsManager />}
         {tab === 'automod' && <ServerAutoMod />}
         {tab === 'audit' && <ServerAuditLog />}
       </div>
@@ -702,6 +704,605 @@ function ServerEmojis() {
   );
 }
 
+function ServerAutoMod() {
+  const { currentServer, roles, channels, automodRules, fetchAutomodRules, createAutomodRule, updateAutomodRule, deleteAutomodRule, toggleAutomodRule } = useStore();
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [showCreate, setShowCreate] = useState(false);
+  const [editingRule, setEditingRule] = useState(null);
+
+  // Create form state
+  const [name, setName] = useState('');
+  const [triggerType, setTriggerType] = useState('keyword');
+  const [actionType, setActionType] = useState('block');
+  const [keywords, setKeywords] = useState('');
+  const [maxMessages, setMaxMessages] = useState(5);
+  const [intervalSeconds, setIntervalSeconds] = useState(5);
+  const [maxMentions, setMaxMentions] = useState(10);
+  const [blockedDomains, setBlockedDomains] = useState('');
+  const [allowListDomains, setAllowListDomains] = useState('');
+  const [customMessage, setCustomMessage] = useState('');
+  const [alertChannelId, setAlertChannelId] = useState('');
+  const [timeoutDuration, setTimeoutDuration] = useState(300);
+  const [exemptRoleIds, setExemptRoleIds] = useState([]);
+  const [exemptChannelIds, setExemptChannelIds] = useState([]);
+
+  React.useEffect(() => {
+    setLoading(true);
+    fetchAutomodRules(currentServer.id).finally(() => setLoading(false));
+  }, [currentServer.id]);
+
+  const resetForm = () => {
+    setName('');
+    setTriggerType('keyword');
+    setActionType('block');
+    setKeywords('');
+    setMaxMessages(5);
+    setIntervalSeconds(5);
+    setMaxMentions(10);
+    setBlockedDomains('');
+    setAllowListDomains('');
+    setCustomMessage('');
+    setAlertChannelId('');
+    setTimeoutDuration(300);
+    setExemptRoleIds([]);
+    setExemptChannelIds([]);
+    setEditingRule(null);
+    setError('');
+  };
+
+  const populateForm = (rule) => {
+    setName(rule.name);
+    setTriggerType(rule.trigger_type);
+    setActionType(rule.action_type);
+    const tm = rule.trigger_metadata || {};
+    const am = rule.action_metadata || {};
+    setKeywords((tm.keywords || []).join('\n'));
+    setMaxMessages(tm.max_messages || 5);
+    setIntervalSeconds(tm.interval_seconds || 5);
+    setMaxMentions(tm.max_mentions || 10);
+    setBlockedDomains((tm.blocked_domains || []).join('\n'));
+    setAllowListDomains((tm.allow_list || []).join('\n'));
+    setCustomMessage(am.custom_message || '');
+    setAlertChannelId(am.alert_channel_id || '');
+    setTimeoutDuration(am.duration_seconds || 300);
+    setExemptRoleIds(rule.exempt_roles || []);
+    setExemptChannelIds(rule.exempt_channels || []);
+  };
+
+  const buildTriggerMetadata = () => {
+    switch (triggerType) {
+      case 'keyword':
+        return {
+          keywords: keywords.split('\n').map(k => k.trim()).filter(Boolean),
+          regex_patterns: [],
+        };
+      case 'spam':
+        return {
+          max_messages: parseInt(maxMessages) || 5,
+          interval_seconds: parseInt(intervalSeconds) || 5,
+        };
+      case 'mention_spam':
+        return { max_mentions: parseInt(maxMentions) || 10 };
+      case 'link':
+        return {
+          blocked_domains: blockedDomains.split('\n').map(d => d.trim()).filter(Boolean),
+          allow_list: allowListDomains.split('\n').map(d => d.trim()).filter(Boolean),
+        };
+      default:
+        return {};
+    }
+  };
+
+  const buildActionMetadata = () => {
+    switch (actionType) {
+      case 'block':
+        return { custom_message: customMessage || undefined };
+      case 'alert':
+        return { alert_channel_id: alertChannelId || undefined };
+      case 'timeout':
+        return {
+          duration_seconds: parseInt(timeoutDuration) || 300,
+          alert_channel_id: alertChannelId || undefined,
+        };
+      default:
+        return {};
+    }
+  };
+
+  const handleSubmit = async () => {
+    if (!name.trim()) {
+      setError('Rule name is required');
+      return;
+    }
+
+    setError('');
+    try {
+      const data = {
+        name: name.trim(),
+        trigger_type: triggerType,
+        trigger_metadata: buildTriggerMetadata(),
+        action_type: actionType,
+        action_metadata: buildActionMetadata(),
+        exempt_roles: exemptRoleIds,
+        exempt_channels: exemptChannelIds,
+      };
+
+      if (editingRule) {
+        await updateAutomodRule(currentServer.id, editingRule.id, data);
+      } else {
+        await createAutomodRule(currentServer.id, data);
+      }
+      resetForm();
+      setShowCreate(false);
+    } catch (err) {
+      setError(err.message || 'Failed to save rule');
+    }
+  };
+
+  const handleDelete = async (ruleId) => {
+    try {
+      await deleteAutomodRule(currentServer.id, ruleId);
+    } catch (err) {
+      setError(err.message || 'Failed to delete rule');
+    }
+  };
+
+  const handleToggle = async (ruleId, currentEnabled) => {
+    try {
+      await toggleAutomodRule(currentServer.id, ruleId, !currentEnabled);
+    } catch (err) {
+      setError(err.message || 'Failed to toggle rule');
+    }
+  };
+
+  const handleEdit = (rule) => {
+    populateForm(rule);
+    setEditingRule(rule);
+    setShowCreate(true);
+  };
+
+  const handleExemptRoleToggle = (roleId) => {
+    setExemptRoleIds(prev =>
+      prev.includes(roleId) ? prev.filter(r => r !== roleId) : [...prev, roleId]
+    );
+  };
+
+  const handleExemptChannelToggle = (channelId) => {
+    setExemptChannelIds(prev =>
+      prev.includes(channelId) ? prev.filter(c => c !== channelId) : [...prev, channelId]
+    );
+  };
+
+  const triggerTypeLabels = {
+    keyword: 'Keyword Filter',
+    spam: 'Spam Protection',
+    mention_spam: 'Mention Spam',
+    link: 'Link Filter',
+  };
+
+  const actionTypeLabels = {
+    block: 'Block Message',
+    alert: 'Send Alert',
+    timeout: 'Timeout User',
+  };
+
+  const actionTypeColors = {
+    block: '#ED4245',
+    alert: '#FEE75C',
+    timeout: '#EB459E',
+  };
+
+  const triggerTypeColors = {
+    keyword: '#5865F2',
+    spam: '#57F287',
+    mention_spam: '#FEE75C',
+    link: '#EB459E',
+  };
+
+  const textChannels = channels.filter(c => c.type === 'text' || c.type === 'announcement');
+  const nonDefaultRoles = roles.filter(r => !r.is_default);
+
+  return (
+    <>
+      <div className="settings-title">AutoMod</div>
+      <p style={{ color: 'var(--text-muted)', fontSize: 14, marginBottom: 16 }}>
+        Set up automated content moderation rules to keep your server safe.
+        Server owners and administrators bypass all AutoMod rules.
+      </p>
+
+      {error && (
+        <div style={{ padding: '8px 12px', background: 'rgba(237, 66, 69, 0.15)', color: '#ED4245', borderRadius: 4, marginBottom: 12, fontSize: 13 }}>
+          {error}
+        </div>
+      )}
+
+      {!showCreate && (
+        <button
+          className="btn btn-primary"
+          onClick={() => { resetForm(); setShowCreate(true); }}
+          style={{ marginBottom: 20 }}
+        >
+          Create Rule
+        </button>
+      )}
+
+      {showCreate && (
+        <div style={{ marginBottom: 24, padding: 16, background: 'var(--bg-secondary)', borderRadius: 8 }}>
+          <h4 style={{ color: 'var(--header-secondary)', marginBottom: 12, fontSize: 14 }}>
+            {editingRule ? 'Edit Rule' : 'Create Rule'}
+          </h4>
+
+          {/* Name */}
+          <div className="form-group">
+            <label className="form-label">Rule Name</label>
+            <input
+              className="form-input"
+              value={name}
+              onChange={e => setName(e.target.value)}
+              placeholder="e.g., Block Bad Words"
+              maxLength={100}
+            />
+          </div>
+
+          {/* Trigger Type */}
+          <div className="form-group">
+            <label className="form-label">Trigger Type</label>
+            <select
+              className="form-input"
+              value={triggerType}
+              onChange={e => setTriggerType(e.target.value)}
+              style={{ cursor: 'pointer' }}
+            >
+              <option value="keyword">Keyword Filter</option>
+              <option value="spam">Spam Protection</option>
+              <option value="mention_spam">Mention Spam</option>
+              <option value="link">Link Filter</option>
+            </select>
+          </div>
+
+          {/* Trigger Config */}
+          {triggerType === 'keyword' && (
+            <div className="form-group">
+              <label className="form-label">Keywords (one per line)</label>
+              <textarea
+                className="form-input"
+                value={keywords}
+                onChange={e => setKeywords(e.target.value)}
+                placeholder={"badword1\nbadword2\nbadword3"}
+                rows={4}
+                style={{ resize: 'vertical', fontFamily: 'monospace', fontSize: 13 }}
+              />
+            </div>
+          )}
+
+          {triggerType === 'spam' && (
+            <div style={{ display: 'flex', gap: 12 }}>
+              <div className="form-group" style={{ flex: 1 }}>
+                <label className="form-label">Max Messages</label>
+                <input
+                  className="form-input"
+                  type="number"
+                  value={maxMessages}
+                  onChange={e => setMaxMessages(e.target.value)}
+                  min={2}
+                  max={50}
+                />
+              </div>
+              <div className="form-group" style={{ flex: 1 }}>
+                <label className="form-label">Interval (seconds)</label>
+                <input
+                  className="form-input"
+                  type="number"
+                  value={intervalSeconds}
+                  onChange={e => setIntervalSeconds(e.target.value)}
+                  min={1}
+                  max={60}
+                />
+              </div>
+            </div>
+          )}
+
+          {triggerType === 'mention_spam' && (
+            <div className="form-group">
+              <label className="form-label">Max Mentions Per Message</label>
+              <input
+                className="form-input"
+                type="number"
+                value={maxMentions}
+                onChange={e => setMaxMentions(e.target.value)}
+                min={1}
+                max={100}
+              />
+            </div>
+          )}
+
+          {triggerType === 'link' && (
+            <>
+              <div className="form-group">
+                <label className="form-label">Blocked Domains (one per line)</label>
+                <textarea
+                  className="form-input"
+                  value={blockedDomains}
+                  onChange={e => setBlockedDomains(e.target.value)}
+                  placeholder={"spam.com\nmalware.net"}
+                  rows={3}
+                  style={{ resize: 'vertical', fontFamily: 'monospace', fontSize: 13 }}
+                />
+              </div>
+              <div className="form-group">
+                <label className="form-label">Allow List (one per line, optional)</label>
+                <textarea
+                  className="form-input"
+                  value={allowListDomains}
+                  onChange={e => setAllowListDomains(e.target.value)}
+                  placeholder={"youtube.com\ntwitter.com"}
+                  rows={2}
+                  style={{ resize: 'vertical', fontFamily: 'monospace', fontSize: 13 }}
+                />
+              </div>
+            </>
+          )}
+
+          {/* Action Type */}
+          <div className="form-group">
+            <label className="form-label">Action</label>
+            <select
+              className="form-input"
+              value={actionType}
+              onChange={e => setActionType(e.target.value)}
+              style={{ cursor: 'pointer' }}
+            >
+              <option value="block">Block Message</option>
+              <option value="alert">Send Alert</option>
+              <option value="timeout">Timeout User</option>
+            </select>
+          </div>
+
+          {/* Action Config */}
+          {actionType === 'block' && (
+            <div className="form-group">
+              <label className="form-label">Custom Block Message (optional)</label>
+              <input
+                className="form-input"
+                value={customMessage}
+                onChange={e => setCustomMessage(e.target.value)}
+                placeholder="Your message was blocked by AutoMod"
+              />
+            </div>
+          )}
+
+          {(actionType === 'alert' || actionType === 'timeout') && (
+            <div className="form-group">
+              <label className="form-label">Alert Channel</label>
+              <select
+                className="form-input"
+                value={alertChannelId}
+                onChange={e => setAlertChannelId(e.target.value)}
+                style={{ cursor: 'pointer' }}
+              >
+                <option value="">Select a channel...</option>
+                {textChannels.map(ch => (
+                  <option key={ch.id} value={ch.id}>#{ch.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {actionType === 'timeout' && (
+            <>
+              <div className="form-group">
+                <label className="form-label">Timeout Duration (seconds)</label>
+                <input
+                  className="form-input"
+                  type="number"
+                  value={timeoutDuration}
+                  onChange={e => setTimeoutDuration(e.target.value)}
+                  min={60}
+                  max={604800}
+                />
+                <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>
+                  {timeoutDuration >= 3600
+                    ? `${Math.floor(timeoutDuration / 3600)}h ${Math.floor((timeoutDuration % 3600) / 60)}m`
+                    : `${Math.floor(timeoutDuration / 60)}m ${timeoutDuration % 60}s`}
+                </div>
+              </div>
+              <div className="form-group">
+                <label className="form-label">Custom Block Message (optional)</label>
+                <input
+                  className="form-input"
+                  value={customMessage}
+                  onChange={e => setCustomMessage(e.target.value)}
+                  placeholder="You have been timed out by AutoMod"
+                />
+              </div>
+            </>
+          )}
+
+          {/* Exempt Roles */}
+          {nonDefaultRoles.length > 0 && (
+            <div className="form-group">
+              <label className="form-label">Exempt Roles</label>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                {nonDefaultRoles.map(role => (
+                  <label
+                    key={role.id}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 4, fontSize: 13,
+                      padding: '4px 8px', borderRadius: 4, cursor: 'pointer',
+                      background: exemptRoleIds.includes(role.id) ? 'var(--bg-modifier-selected)' : 'var(--bg-tertiary)',
+                      color: role.color !== '#99AAB5' ? role.color : 'var(--text-normal)',
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={exemptRoleIds.includes(role.id)}
+                      onChange={() => handleExemptRoleToggle(role.id)}
+                      style={{ display: 'none' }}
+                    />
+                    <div style={{ width: 8, height: 8, borderRadius: '50%', background: role.color }} />
+                    {role.name}
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Exempt Channels */}
+          {textChannels.length > 0 && (
+            <div className="form-group">
+              <label className="form-label">Exempt Channels</label>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                {textChannels.map(ch => (
+                  <label
+                    key={ch.id}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 4, fontSize: 13,
+                      padding: '4px 8px', borderRadius: 4, cursor: 'pointer',
+                      background: exemptChannelIds.includes(ch.id) ? 'var(--bg-modifier-selected)' : 'var(--bg-tertiary)',
+                      color: 'var(--text-normal)',
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={exemptChannelIds.includes(ch.id)}
+                      onChange={() => handleExemptChannelToggle(ch.id)}
+                      style={{ display: 'none' }}
+                    />
+                    #{ch.name}
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Buttons */}
+          <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
+            <button className="btn btn-primary" onClick={handleSubmit}>
+              {editingRule ? 'Save Changes' : 'Create Rule'}
+            </button>
+            <button
+              className="btn"
+              onClick={() => { resetForm(); setShowCreate(false); }}
+              style={{ background: 'var(--bg-tertiary)', color: 'var(--text-normal)' }}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Existing Rules */}
+      <h4 style={{ color: 'var(--header-secondary)', marginBottom: 8, fontSize: 14 }}>
+        Rules - {automodRules.length}
+      </h4>
+
+      {loading ? (
+        <div style={{ color: 'var(--text-muted)' }}>Loading rules...</div>
+      ) : automodRules.length === 0 ? (
+        <div style={{ color: 'var(--text-muted)', padding: 16, textAlign: 'center' }}>
+          No AutoMod rules yet. Create one to get started.
+        </div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          {automodRules.map(rule => (
+            <div key={rule.id} style={{
+              padding: '12px 16px', background: 'var(--bg-secondary)', borderRadius: 8,
+              opacity: rule.enabled ? 1 : 0.6,
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
+                <span style={{ fontWeight: 600, color: 'var(--header-primary)', fontSize: 15, flex: 1 }}>
+                  {rule.name}
+                </span>
+                <span style={{
+                  fontSize: 11, padding: '2px 8px', borderRadius: 3, fontWeight: 600,
+                  background: `${triggerTypeColors[rule.trigger_type] || '#5865F2'}22`,
+                  color: triggerTypeColors[rule.trigger_type] || '#5865F2',
+                }}>
+                  {triggerTypeLabels[rule.trigger_type] || rule.trigger_type}
+                </span>
+                <span style={{
+                  fontSize: 11, padding: '2px 8px', borderRadius: 3, fontWeight: 600,
+                  background: `${actionTypeColors[rule.action_type] || '#5865F2'}22`,
+                  color: actionTypeColors[rule.action_type] || '#5865F2',
+                }}>
+                  {actionTypeLabels[rule.action_type] || rule.action_type}
+                </span>
+              </div>
+
+              {/* Show trigger details */}
+              <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 8 }}>
+                {rule.trigger_type === 'keyword' && rule.trigger_metadata?.keywords?.length > 0 && (
+                  <span>Keywords: {rule.trigger_metadata.keywords.slice(0, 5).join(', ')}{rule.trigger_metadata.keywords.length > 5 ? ` +${rule.trigger_metadata.keywords.length - 5} more` : ''}</span>
+                )}
+                {rule.trigger_type === 'spam' && (
+                  <span>Max {rule.trigger_metadata?.max_messages || 5} messages in {rule.trigger_metadata?.interval_seconds || 5}s</span>
+                )}
+                {rule.trigger_type === 'mention_spam' && (
+                  <span>Max {rule.trigger_metadata?.max_mentions || 10} mentions per message</span>
+                )}
+                {rule.trigger_type === 'link' && rule.trigger_metadata?.blocked_domains?.length > 0 && (
+                  <span>Blocked: {rule.trigger_metadata.blocked_domains.slice(0, 3).join(', ')}{rule.trigger_metadata.blocked_domains.length > 3 ? ` +${rule.trigger_metadata.blocked_domains.length - 3} more` : ''}</span>
+                )}
+              </div>
+
+              {/* Exemptions */}
+              {((rule.exempt_roles?.length > 0) || (rule.exempt_channels?.length > 0)) && (
+                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 8, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  {rule.exempt_roles?.length > 0 && (
+                    <span>Exempt roles: {rule.exempt_roles.length}</span>
+                  )}
+                  {rule.exempt_channels?.length > 0 && (
+                    <span>Exempt channels: {rule.exempt_channels.length}</span>
+                  )}
+                </div>
+              )}
+
+              {/* Actions */}
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <label style={{
+                  display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontSize: 13,
+                  color: rule.enabled ? '#57F287' : 'var(--text-muted)',
+                }}>
+                  <input
+                    type="checkbox"
+                    checked={!!rule.enabled}
+                    onChange={() => handleToggle(rule.id, rule.enabled)}
+                  />
+                  {rule.enabled ? 'Enabled' : 'Disabled'}
+                </label>
+                <span style={{ flex: 1 }} />
+                <button
+                  onClick={() => handleEdit(rule)}
+                  style={{
+                    background: 'transparent', border: 'none', color: 'var(--text-link)',
+                    cursor: 'pointer', fontSize: 13, padding: '4px 8px', borderRadius: 4,
+                  }}
+                  onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-modifier-hover)'}
+                  onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                >
+                  Edit
+                </button>
+                <button
+                  onClick={() => handleDelete(rule.id)}
+                  style={{
+                    background: 'transparent', border: 'none', color: '#ED4245',
+                    cursor: 'pointer', fontSize: 13, padding: '4px 8px', borderRadius: 4,
+                  }}
+                  onMouseEnter={e => e.currentTarget.style.background = 'rgba(237,66,69,0.15)'}
+                  onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                >
+                  Delete
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
+
 function ServerAuditLog() {
   const { currentServer } = useStore();
   const [entries, setEntries] = useState([]);
@@ -826,6 +1427,302 @@ function ServerAuditLog() {
                   </div>
                 )}
                 <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>{formatDate(entry.created_at)}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
+
+function ServerEventsManager() {
+  const { currentServer, serverEvents, createEvent, updateEvent, deleteEvent, fetchServerEvents } = useStore();
+  const [showForm, setShowForm] = useState(false);
+  const [editingEvent, setEditingEvent] = useState(null);
+  const [name, setName] = useState('');
+  const [description, setDescription] = useState('');
+  const [startTime, setStartTime] = useState('');
+  const [endTime, setEndTime] = useState('');
+  const [location, setLocation] = useState('');
+  const [eventStatus, setEventStatus] = useState('scheduled');
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  React.useEffect(() => {
+    if (currentServer?.id) {
+      fetchServerEvents(currentServer.id);
+    }
+  }, [currentServer?.id]);
+
+  const resetForm = () => {
+    setName('');
+    setDescription('');
+    setStartTime('');
+    setEndTime('');
+    setLocation('');
+    setEventStatus('scheduled');
+    setError('');
+    setEditingEvent(null);
+  };
+
+  const toLocalDatetime = (isoStr) => {
+    const date = new Date(isoStr);
+    const offset = date.getTimezoneOffset();
+    const local = new Date(date.getTime() - offset * 60000);
+    return local.toISOString().slice(0, 16);
+  };
+
+  const handleEdit = (event) => {
+    setEditingEvent(event);
+    setName(event.name);
+    setDescription(event.description || '');
+    setStartTime(toLocalDatetime(event.start_time));
+    setEndTime(event.end_time ? toLocalDatetime(event.end_time) : '');
+    setLocation(event.location || '');
+    setEventStatus(event.status || 'scheduled');
+    setShowForm(true);
+  };
+
+  const handleSave = async () => {
+    if (!name.trim()) { setError('Event name is required'); return; }
+    if (!startTime) { setError('Start time is required'); return; }
+
+    setSaving(true);
+    setError('');
+    try {
+      const data = {
+        name: name.trim(),
+        description,
+        start_time: new Date(startTime).toISOString(),
+        end_time: endTime ? new Date(endTime).toISOString() : null,
+        location,
+      };
+
+      if (editingEvent) {
+        data.status = eventStatus;
+        await updateEvent(currentServer.id, editingEvent.id, data);
+      } else {
+        await createEvent(currentServer.id, data);
+      }
+      resetForm();
+      setShowForm(false);
+    } catch (err) {
+      setError(err.message || 'Failed to save event');
+    }
+    setSaving(false);
+  };
+
+  const handleDelete = async (eventId) => {
+    try {
+      await deleteEvent(currentServer.id, eventId);
+    } catch (err) {
+      setError(err.message || 'Failed to delete event');
+    }
+  };
+
+  const formatDate = (d) => {
+    const date = new Date(d);
+    return date.toLocaleDateString('en-US', {
+      weekday: 'short', month: 'short', day: 'numeric',
+      hour: 'numeric', minute: '2-digit',
+    });
+  };
+
+  const statusColors = {
+    scheduled: '#5865F2',
+    active: '#57F287',
+    completed: '#99AAB5',
+    cancelled: '#ED4245',
+  };
+
+  return (
+    <>
+      <div className="settings-title">Events</div>
+      <p style={{ color: 'var(--text-muted)', fontSize: 14, marginBottom: 16 }}>
+        Create and manage server events. Members can show interest to get reminders.
+      </p>
+
+      {error && (
+        <div style={{ padding: '8px 12px', background: 'rgba(237, 66, 69, 0.15)', color: '#ED4245', borderRadius: 4, marginBottom: 12, fontSize: 13 }}>
+          {error}
+        </div>
+      )}
+
+      {!showForm && (
+        <button
+          className="btn btn-primary"
+          onClick={() => { resetForm(); setShowForm(true); }}
+          style={{ marginBottom: 20 }}
+        >
+          Create Event
+        </button>
+      )}
+
+      {showForm && (
+        <div style={{
+          marginBottom: 20, padding: 16, background: 'var(--bg-secondary)',
+          borderRadius: 8, border: '1px solid var(--bg-modifier-active)',
+        }}>
+          <h4 style={{ color: 'var(--header-secondary)', marginBottom: 12, fontSize: 14 }}>
+            {editingEvent ? 'Edit Event' : 'Create Event'}
+          </h4>
+
+          <div className="form-group" style={{ marginBottom: 12 }}>
+            <label className="form-label">Event Name *</label>
+            <input
+              className="form-input"
+              value={name}
+              onChange={e => setName(e.target.value)}
+              placeholder="What's the event?"
+              maxLength={100}
+            />
+          </div>
+
+          <div className="form-group" style={{ marginBottom: 12 }}>
+            <label className="form-label">Description</label>
+            <textarea
+              className="form-input"
+              value={description}
+              onChange={e => setDescription(e.target.value)}
+              placeholder="Tell people about this event..."
+              rows={3}
+              style={{ resize: 'vertical', minHeight: 60 }}
+            />
+          </div>
+
+          <div style={{ display: 'flex', gap: 12, marginBottom: 12 }}>
+            <div className="form-group" style={{ flex: 1, marginBottom: 0 }}>
+              <label className="form-label">Start Time *</label>
+              <input
+                className="form-input"
+                type="datetime-local"
+                value={startTime}
+                onChange={e => setStartTime(e.target.value)}
+              />
+            </div>
+            <div className="form-group" style={{ flex: 1, marginBottom: 0 }}>
+              <label className="form-label">End Time</label>
+              <input
+                className="form-input"
+                type="datetime-local"
+                value={endTime}
+                onChange={e => setEndTime(e.target.value)}
+              />
+            </div>
+          </div>
+
+          <div className="form-group" style={{ marginBottom: 12 }}>
+            <label className="form-label">Location</label>
+            <input
+              className="form-input"
+              value={location}
+              onChange={e => setLocation(e.target.value)}
+              placeholder="Where is it happening?"
+            />
+          </div>
+
+          {editingEvent && (
+            <div className="form-group" style={{ marginBottom: 12 }}>
+              <label className="form-label">Status</label>
+              <select
+                className="form-input"
+                value={eventStatus}
+                onChange={e => setEventStatus(e.target.value)}
+                style={{ cursor: 'pointer' }}
+              >
+                <option value="scheduled">Scheduled</option>
+                <option value="active">Active</option>
+                <option value="completed">Completed</option>
+                <option value="cancelled">Cancelled</option>
+              </select>
+            </div>
+          )}
+
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+            <button
+              className="btn"
+              onClick={() => { setShowForm(false); resetForm(); }}
+              style={{ background: 'var(--bg-tertiary)', color: 'var(--text-normal)' }}
+            >
+              Cancel
+            </button>
+            <button
+              className="btn btn-primary"
+              onClick={handleSave}
+              disabled={saving}
+            >
+              {saving ? 'Saving...' : editingEvent ? 'Save Changes' : 'Create Event'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      <h4 style={{ color: 'var(--header-secondary)', marginBottom: 8, fontSize: 14 }}>
+        All Events ({serverEvents.length})
+      </h4>
+
+      {serverEvents.length === 0 ? (
+        <div style={{ color: 'var(--text-muted)', padding: 16, textAlign: 'center' }}>
+          No events yet. Create one above!
+        </div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          {[...serverEvents].sort((a, b) => new Date(a.start_time) - new Date(b.start_time)).map(event => (
+            <div key={event.id} style={{
+              display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px',
+              background: 'var(--bg-secondary)', borderRadius: 4,
+              opacity: event.status === 'cancelled' || event.status === 'completed' ? 0.6 : 1,
+            }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 2 }}>
+                  <span style={{ fontWeight: 600, color: 'var(--header-primary)', fontSize: 14 }}>
+                    {event.name}
+                  </span>
+                  <span style={{
+                    fontSize: 11, padding: '1px 6px', borderRadius: 3,
+                    background: `${statusColors[event.status] || '#5865F2'}22`,
+                    color: statusColors[event.status] || '#5865F2',
+                    fontWeight: 600, textTransform: 'capitalize',
+                  }}>
+                    {event.status}
+                  </span>
+                </div>
+                <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                  {formatDate(event.start_time)}
+                  {event.end_time && ` - ${formatDate(event.end_time)}`}
+                </div>
+                {event.location && (
+                  <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
+                    Location: {event.location}
+                  </div>
+                )}
+                <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
+                  {event.interested_count || 0} interested
+                  {event.username && ` | Created by ${event.username}`}
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+                <button
+                  onClick={() => handleEdit(event)}
+                  style={{
+                    background: 'var(--bg-tertiary)', border: 'none', borderRadius: 4,
+                    padding: '4px 10px', cursor: 'pointer', color: 'var(--text-normal)',
+                    fontSize: 12,
+                  }}
+                >
+                  Edit
+                </button>
+                <button
+                  onClick={() => handleDelete(event.id)}
+                  style={{
+                    background: 'rgba(237,66,69,0.1)', border: 'none', borderRadius: 4,
+                    padding: '4px 10px', cursor: 'pointer', color: '#ED4245',
+                    fontSize: 12,
+                  }}
+                >
+                  Delete
+                </button>
               </div>
             </div>
           ))}

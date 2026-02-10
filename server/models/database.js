@@ -374,6 +374,46 @@ async function initialize() {
       );
       CREATE INDEX IF NOT EXISTS idx_server_emojis_server ON server_emojis(server_id);
 
+      CREATE TABLE IF NOT EXISTS server_events (
+        id TEXT PRIMARY KEY,
+        server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+        creator_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        description TEXT DEFAULT '',
+        start_time TIMESTAMP NOT NULL,
+        end_time TIMESTAMP,
+        location TEXT DEFAULT '',
+        image TEXT DEFAULT NULL,
+        status TEXT DEFAULT 'scheduled' CHECK(status IN ('scheduled','active','completed','cancelled')),
+        interested_count INTEGER DEFAULT 0,
+        created_at TIMESTAMP DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_server_events_server ON server_events(server_id, start_time);
+
+      CREATE TABLE IF NOT EXISTS event_rsvps (
+        event_id TEXT NOT NULL REFERENCES server_events(id) ON DELETE CASCADE,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        status TEXT DEFAULT 'interested' CHECK(status IN ('interested','not_interested')),
+        created_at TIMESTAMP DEFAULT NOW(),
+        PRIMARY KEY (event_id, user_id)
+      );
+
+      CREATE TABLE IF NOT EXISTS automod_rules (
+        id TEXT PRIMARY KEY,
+        server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        enabled INTEGER DEFAULT 1,
+        trigger_type TEXT NOT NULL CHECK(trigger_type IN ('keyword','spam','mention_spam','link')),
+        trigger_metadata TEXT DEFAULT '{}',
+        action_type TEXT NOT NULL CHECK(action_type IN ('block','alert','timeout')),
+        action_metadata TEXT DEFAULT '{}',
+        exempt_roles TEXT DEFAULT '[]',
+        exempt_channels TEXT DEFAULT '[]',
+        created_by TEXT NOT NULL REFERENCES users(id),
+        created_at TIMESTAMP DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_automod_rules_server ON automod_rules(server_id);
+
       -- Trigger to auto-update search vector
       CREATE OR REPLACE FUNCTION messages_search_update() RETURNS trigger AS $$
       BEGIN
@@ -541,6 +581,43 @@ async function initialize() {
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       );
       CREATE INDEX IF NOT EXISTS idx_server_emojis_server ON server_emojis(server_id);
+      CREATE TABLE IF NOT EXISTS server_events (
+        id TEXT PRIMARY KEY,
+        server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+        creator_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        description TEXT DEFAULT '',
+        start_time DATETIME NOT NULL,
+        end_time DATETIME,
+        location TEXT DEFAULT '',
+        image TEXT DEFAULT NULL,
+        status TEXT DEFAULT 'scheduled' CHECK(status IN ('scheduled','active','completed','cancelled')),
+        interested_count INTEGER DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE INDEX IF NOT EXISTS idx_server_events_server ON server_events(server_id, start_time);
+      CREATE TABLE IF NOT EXISTS event_rsvps (
+        event_id TEXT NOT NULL REFERENCES server_events(id) ON DELETE CASCADE,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        status TEXT DEFAULT 'interested' CHECK(status IN ('interested','not_interested')),
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (event_id, user_id)
+      );
+      CREATE TABLE IF NOT EXISTS automod_rules (
+        id TEXT PRIMARY KEY,
+        server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        enabled INTEGER DEFAULT 1,
+        trigger_type TEXT NOT NULL CHECK(trigger_type IN ('keyword','spam','mention_spam','link')),
+        trigger_metadata TEXT DEFAULT '{}',
+        action_type TEXT NOT NULL CHECK(action_type IN ('block','alert','timeout')),
+        action_metadata TEXT DEFAULT '{}',
+        exempt_roles TEXT DEFAULT '[]',
+        exempt_channels TEXT DEFAULT '[]',
+        created_by TEXT NOT NULL REFERENCES users(id),
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE INDEX IF NOT EXISTS idx_automod_rules_server ON automod_rules(server_id);
       CREATE INDEX IF NOT EXISTS idx_messages_channel ON messages(channel_id, created_at);
       CREATE INDEX IF NOT EXISTS idx_messages_author ON messages(author_id);
       CREATE INDEX IF NOT EXISTS idx_server_members_user ON server_members(user_id);

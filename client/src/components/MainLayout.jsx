@@ -28,6 +28,7 @@ export default function MainLayout() {
   } = useStore();
   const connectionState = useStore(s => s.connectionState);
   const activeThread = useStore(s => s.activeThread);
+  const showEventsPanel = useStore(s => s.showEventsPanel);
   const navigate = useNavigate();
 
   // Track connection state
@@ -67,6 +68,54 @@ export default function MainLayout() {
 
     socket.on('nickname_update', handleNicknameUpdate);
     return () => socket.off('nickname_update', handleNicknameUpdate);
+  }, []);
+
+  // Listen for server event updates (real-time)
+  useEffect(() => {
+    const socket = getSocket();
+    if (!socket) return;
+
+    const handleEventCreate = (event) => {
+      useStore.setState(s => {
+        if (s.currentServer?.id !== event.server_id) return {};
+        if (s.serverEvents.some(e => e.id === event.id)) return {};
+        return { serverEvents: [...s.serverEvents, event] };
+      });
+    };
+
+    const handleEventUpdate = (event) => {
+      useStore.setState(s => {
+        if (s.currentServer?.id !== event.server_id) return {};
+        if (event.deleted) {
+          return { serverEvents: s.serverEvents.filter(e => e.id !== event.id) };
+        }
+        return {
+          serverEvents: s.serverEvents.map(e => e.id === event.id ? { ...e, ...event } : e),
+        };
+      });
+    };
+
+    const handleEventRsvp = ({ event_id, user_id, status, interested_count }) => {
+      useStore.setState(s => ({
+        serverEvents: s.serverEvents.map(e => {
+          if (e.id !== event_id) return e;
+          const updated = { ...e, interested_count };
+          if (user_id === s.user?.id) {
+            updated.user_rsvp = status;
+          }
+          return updated;
+        }),
+      }));
+    };
+
+    socket.on('server_event_create', handleEventCreate);
+    socket.on('server_event_update', handleEventUpdate);
+    socket.on('server_event_rsvp', handleEventRsvp);
+    return () => {
+      socket.off('server_event_create', handleEventCreate);
+      socket.off('server_event_update', handleEventUpdate);
+      socket.off('server_event_rsvp', handleEventRsvp);
+    };
   }, []);
 
   // Parse route: /channels/@me or /channels/:serverId/:channelId
@@ -158,6 +207,9 @@ export default function MainLayout() {
       {showServerSettings && <ServerSettings />}
       {showSettings && <UserSettings />}
       {showQuickSwitcher && <QuickSwitcher />}
+      {showEventsPanel && currentServer && (
+        <EventsPanel onClose={() => useStore.setState({ showEventsPanel: false })} />
+      )}
       <ChannelSettings />
     </div>
   );

@@ -10,6 +10,7 @@ import ContextMenu from './ContextMenu';
 export default function MessageItem({
   message, showHeader, isEditing, editContent, setEditContent,
   onEditSave, onEditCancel, onEdit, onReply, currentUserId,
+  bulkSelectMode, isSelected, onMessageSelect,
 }) {
   const [showEmoji, setShowEmoji] = useState(false);
   const [showProfile, setShowProfile] = useState(null);
@@ -60,7 +61,19 @@ export default function MessageItem({
     }
   };
 
+  const handleBulkClick = (e) => {
+    if (bulkSelectMode && onMessageSelect) {
+      e.preventDefault();
+      e.stopPropagation();
+      onMessageSelect(message.id, e.shiftKey);
+    }
+  };
+
   const handleContextMenu = (e) => {
+    if (bulkSelectMode) {
+      e.preventDefault();
+      return;
+    }
     e.preventDefault();
     const items = [
       { label: 'Reply', icon: '↩', action: () => onReply(message) },
@@ -100,12 +113,34 @@ export default function MessageItem({
 
   return (
     <div
-      className={`message-group ${showHeader ? 'has-header' : ''}`}
+      className={`message-group ${showHeader ? 'has-header' : ''} ${bulkSelectMode ? 'bulk-select-active' : ''} ${isSelected ? 'bulk-selected' : ''}`}
       data-message-id={message.id}
       onContextMenu={handleContextMenu}
+      onClick={handleBulkClick}
+      style={bulkSelectMode ? { cursor: 'pointer' } : undefined}
     >
+      {bulkSelectMode && (
+        <div className="bulk-checkbox-container" style={{
+          width: 32, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
+          marginLeft: -8,
+        }}>
+          <div className="bulk-checkbox" style={{
+            width: 18, height: 18, borderRadius: '50%', border: '2px solid var(--text-muted)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            background: isSelected ? '#5865F2' : 'transparent',
+            borderColor: isSelected ? '#5865F2' : 'var(--text-muted)',
+            transition: 'all 0.15s ease',
+          }}>
+            {isSelected && (
+              <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+                <path d="M2 5L4 7L8 3" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
+            )}
+          </div>
+        </div>
+      )}
       {showHeader ? (
-        <div className="message-avatar" style={{ background: avatarColor }} onClick={handleAvatarClick}>
+        <div className="message-avatar" style={{ background: avatarColor }} onClick={bulkSelectMode ? undefined : handleAvatarClick}>
           {message.avatar ? (
             <img src={message.avatar} alt="" style={{ width: '100%', height: '100%', borderRadius: '50%' }} />
           ) : (
@@ -320,24 +355,26 @@ export default function MessageItem({
         )}
       </div>
 
-      {/* Message actions toolbar */}
-      <div className="message-actions">
-        <button className="message-action-btn" onClick={() => setShowEmoji(!showEmoji)} title="Add Reaction">😀</button>
-        <button className="message-action-btn" onClick={() => onReply(message)} title="Reply">↩</button>
-        <button className="message-action-btn" onClick={handlePin} title={message.pinned ? 'Unpin Message' : 'Pin Message'} style={message.pinned ? { color: 'var(--brand-500)' } : {}}>📌</button>
-        {!message.thread_id && (
-          <button className="message-action-btn" onClick={handleCreateThread} title="Create Thread">&#x1F9F5;</button>
-        )}
-        {message.thread_id && (
-          <button className="message-action-btn" onClick={handleOpenThread} title="View Thread">&#x1F9F5;</button>
-        )}
-        {message.author_id === currentUserId && (
-          <button className="message-action-btn" onClick={() => onEdit(message)} title="Edit">✏</button>
-        )}
-        {message.author_id === currentUserId && (
-          <button className="message-action-btn" onClick={handleDelete} title="Delete">🗑</button>
-        )}
-      </div>
+      {/* Message actions toolbar - hidden during bulk select */}
+      {!bulkSelectMode && (
+        <div className="message-actions">
+          <button className="message-action-btn" onClick={() => setShowEmoji(!showEmoji)} title="Add Reaction">😀</button>
+          <button className="message-action-btn" onClick={() => onReply(message)} title="Reply">↩</button>
+          <button className="message-action-btn" onClick={handlePin} title={message.pinned ? 'Unpin Message' : 'Pin Message'} style={message.pinned ? { color: 'var(--brand-500)' } : {}}>📌</button>
+          {!message.thread_id && (
+            <button className="message-action-btn" onClick={handleCreateThread} title="Create Thread">&#x1F9F5;</button>
+          )}
+          {message.thread_id && (
+            <button className="message-action-btn" onClick={handleOpenThread} title="View Thread">&#x1F9F5;</button>
+          )}
+          {message.author_id === currentUserId && (
+            <button className="message-action-btn" onClick={() => onEdit(message)} title="Edit">✏</button>
+          )}
+          {message.author_id === currentUserId && (
+            <button className="message-action-btn" onClick={handleDelete} title="Delete">🗑</button>
+          )}
+        </div>
+      )}
 
       {/* Emoji picker */}
       {showEmoji && (

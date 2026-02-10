@@ -89,6 +89,10 @@ function setupSocketHandlers(io) {
       io.to(`channel:${channelId}`).emit('message_delete', { channelId, messageId });
     });
 
+    socket.on('bulk_message_delete', ({ channelId, messageIds }) => {
+      io.to(`channel:${channelId}`).emit('bulk_message_delete', { channelId, messageIds });
+    });
+
     socket.on('message_pin', ({ channelId, messageId }) => {
       io.to(`channel:${channelId}`).emit('message_pin', { channelId, messageId });
     });

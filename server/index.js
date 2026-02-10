@@ -20,6 +20,8 @@ const roleRoutes = require('./routes/roles');
 const inviteRoutes = require('./routes/invites');
 const dmRoutes = require('./routes/dms');
 const relationshipRoutes = require('./routes/relationships');
+const eventRoutes = require('./routes/events');
+const automodRoutes = require('./routes/automod');
 
 const app = express();
 const server = http.createServer(app);
@@ -86,6 +88,8 @@ app.use('/api/servers', authenticate, inviteRoutes);
 app.use('/api', authenticate, channelRoutes); // For /api/channels/:id routes
 app.use('/api', authenticate, messageRoutes); // For /api/:channelId/messages
 app.use('/api', authenticate, inviteRoutes);  // For /api/invites/:code
+app.use('/api/servers', authenticate, eventRoutes);
+app.use('/api', authenticate, automodRoutes);
 app.use('/api/dms', authenticate, dmRoutes);
 app.use('/api/relationships', authenticate, relationshipRoutes);
 

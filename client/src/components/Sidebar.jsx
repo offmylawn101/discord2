@@ -220,6 +220,8 @@ export default function Sidebar({ isHome }) {
         <span style={{ fontSize: 12, opacity: 0.5 }}>▼</span>
       </div>
 
+      <SidebarEventsIndicator />
+
       <div className="channel-list">
         {/* Uncategorized channels */}
         {uncategorized
@@ -378,5 +380,79 @@ function ChannelItem({ channel, active, onClick, isDragging, dropTarget, onDragS
         </div>
       )}
     </>
+  );
+}
+
+function SidebarEventsIndicator() {
+  const serverEvents = useStore(s => s.serverEvents);
+  const toggleEventsPanel = useStore(s => s.toggleEventsPanel);
+
+  // Filter to upcoming scheduled/active events
+  const now = new Date();
+  const upcoming = serverEvents.filter(e =>
+    (e.status === 'scheduled' || e.status === 'active') &&
+    new Date(e.end_time || e.start_time) >= now
+  );
+
+  if (upcoming.length === 0) return null;
+
+  const nextEvent = upcoming.sort((a, b) => new Date(a.start_time) - new Date(b.start_time))[0];
+  const nextDate = new Date(nextEvent.start_time);
+  const isToday = nextDate.toDateString() === now.toDateString();
+  const isTomorrow = nextDate.toDateString() === new Date(now.getTime() + 86400000).toDateString();
+
+  let timeLabel;
+  if (nextEvent.status === 'active') {
+    timeLabel = 'Happening now';
+  } else if (isToday) {
+    timeLabel = `Today at ${nextDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`;
+  } else if (isTomorrow) {
+    timeLabel = `Tomorrow at ${nextDate.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`;
+  } else {
+    timeLabel = nextDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  }
+
+  return (
+    <div
+      onClick={toggleEventsPanel}
+      style={{
+        padding: '8px 12px', margin: '0 8px 4px',
+        background: 'var(--bg-secondary)', borderRadius: 4,
+        cursor: 'pointer', transition: 'background 0.15s',
+      }}
+      onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-modifier-active)'}
+      onMouseLeave={e => e.currentTarget.style.background = 'var(--bg-secondary)'}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" style={{ flexShrink: 0 }}>
+          <rect x="3" y="4" width="18" height="18" rx="2" stroke="var(--text-muted)" strokeWidth="2"/>
+          <path d="M3 10h18" stroke="var(--text-muted)" strokeWidth="2"/>
+          <path d="M8 2v4M16 2v4" stroke="var(--text-muted)" strokeWidth="2" strokeLinecap="round"/>
+        </svg>
+        <span style={{
+          fontSize: 12, fontWeight: 600, color: 'var(--text-normal)',
+          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1,
+        }}>
+          {nextEvent.name}
+        </span>
+        {upcoming.length > 1 && (
+          <span style={{
+            fontSize: 10, fontWeight: 700, color: 'var(--text-muted)',
+            background: 'var(--bg-tertiary)', borderRadius: 8,
+            padding: '0 5px', height: 16, display: 'flex',
+            alignItems: 'center', flexShrink: 0,
+          }}>
+            +{upcoming.length - 1}
+          </span>
+        )}
+      </div>
+      <div style={{
+        fontSize: 11, color: nextEvent.status === 'active' ? '#57F287' : 'var(--text-muted)',
+        marginTop: 2,
+        fontWeight: nextEvent.status === 'active' ? 600 : 400,
+      }}>
+        {timeLabel}
+      </div>
+    </div>
   );
 }

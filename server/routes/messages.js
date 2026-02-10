@@ -7,6 +7,7 @@ const { authenticate } = require('../middleware/auth');
 const { PERMISSIONS, checkPermission } = require('../utils/permissions');
 const { messageLimiter, searchLimiter } = require('../middleware/rateLimit');
 const { fetchUrlMeta, extractUrls } = require('../utils/embeds');
+const { checkAutomod } = require('../utils/automod');
 
 const router = express.Router();
 
@@ -186,6 +187,14 @@ router.post('/:channelId/messages', authenticate, messageLimiter, upload.array('
       }
     }
 
+    // AutoMod check for server channels
+    if (channel.server_id && content) {
+      const automodResult = await checkAutomod(db, req.app.get('io'), channel.server_id, channelId, req.userId, content);
+      if (automodResult.blocked) {
+        return res.status(403).json({ error: automodResult.reason || 'Message blocked by AutoMod' });
+      }
+    }
+
     const messageId = uuidv4();
 
     await db.transaction(async (tx) => {
@@ -362,6 +371,71 @@ router.delete('/:channelId/messages/:messageId', authenticate, async (req, res) 
     await db.run('DELETE FROM messages WHERE id = ?', [messageId]);
     res.json({ deleted: true, id: messageId });
   } catch (err) {
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Bulk delete messages
+router.post('/:channelId/messages/bulk-delete', authenticate, async (req, res) => {
+  try {
+    const { channelId } = req.params;
+    const { message_ids } = req.body;
+
+    if (!Array.isArray(message_ids) || message_ids.length === 0) {
+      return res.status(400).json({ error: 'message_ids must be a non-empty array' });
+    }
+    if (message_ids.length > 100) {
+      return res.status(400).json({ error: 'Cannot bulk delete more than 100 messages' });
+    }
+
+    const channel = await db.get('SELECT * FROM channels WHERE id = ?', [channelId]);
+    if (!channel) return res.status(404).json({ error: 'Channel not found' });
+
+    // Require MANAGE_MESSAGES permission for server channels
+    if (channel.server_id) {
+      if (!await checkPermission(db, req.userId, channel.server_id, channelId, PERMISSIONS.MANAGE_MESSAGES)) {
+        return res.status(403).json({ error: 'Missing MANAGE_MESSAGES permission' });
+      }
+    } else {
+      return res.status(403).json({ error: 'Bulk delete is only available in server channels' });
+    }
+
+    // Verify all messages belong to this channel and are less than 14 days old
+    const placeholders = message_ids.map(() => '?').join(',');
+    const messages = await db.all(
+      `SELECT id, channel_id, created_at FROM messages WHERE id IN (${placeholders})`,
+      message_ids
+    );
+
+    const fourteenDaysAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
+    const invalidMessages = [];
+    const validIds = [];
+
+    for (const msg of messages) {
+      if (msg.channel_id !== channelId) {
+        invalidMessages.push({ id: msg.id, reason: 'wrong_channel' });
+      } else if (new Date(msg.created_at) < fourteenDaysAgo) {
+        invalidMessages.push({ id: msg.id, reason: 'too_old' });
+      } else {
+        validIds.push(msg.id);
+      }
+    }
+
+    if (validIds.length === 0) {
+      return res.status(400).json({ error: 'No valid messages to delete', invalidMessages });
+    }
+
+    // Delete all valid messages
+    const deletePlaceholders = validIds.map(() => '?').join(',');
+    await db.run(`DELETE FROM messages WHERE id IN (${deletePlaceholders})`, validIds);
+
+    // Broadcast bulk delete event
+    const io = req.app.get('io');
+    io?.to(`channel:${channelId}`).emit('bulk_message_delete', { channelId, messageIds: validIds });
+
+    res.json({ deleted: validIds, failed: invalidMessages });
+  } catch (err) {
+    console.error('Bulk delete error:', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

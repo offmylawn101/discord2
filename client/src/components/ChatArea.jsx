@@ -10,7 +10,9 @@ export default function ChatArea() {
   const {
     currentChannel, messages, loadingMessages, sendMessage,
     replyingTo, setReplyingTo, user, typingUsers, toggleInviteModal,
-    members,
+    members, bulkSelectMode, selectedMessages, toggleBulkSelect,
+    toggleMessageSelect, selectAllMessages, clearSelection, bulkDeleteMessages,
+    removeBulkMessages, currentServer,
   } = useStore();
   const [content, setContent] = useState('');
   const [files, setFiles] = useState([]);
@@ -25,12 +27,63 @@ export default function ChatArea() {
   const [showMentionPicker, setShowMentionPicker] = useState(false);
   const [mentionIndex, setMentionIndex] = useState(0);
   const mentionStartPos = useRef(null);
+  const [bulkDeleting, setBulkDeleting] = useState(false);
   const messagesEndRef = useRef(null);
   const messagesAreaRef = useRef(null);
   const fileInputRef = useRef(null);
   const textareaRef = useRef(null);
   const typingTimeout = useRef(null);
   const isAtBottom = useRef(true);
+  const lastClickedIndex = useRef(null);
+
+  // Check if current user has MANAGE_MESSAGES permission
+  const canManageMessages = (() => {
+    if (!currentServer || !user) return false;
+    // Server owner always has permission
+    if (currentServer.owner_id === user.id) return true;
+    // Check roles for MANAGE_MESSAGES (1 << 13 = 8192) or ADMINISTRATOR (1 << 3 = 8)
+    const memberEntry = members?.find(m => m.id === user.id);
+    if (!memberEntry?.roles) return false;
+    const MANAGE_MESSAGES = 1n << 13n;
+    const ADMINISTRATOR = 1n << 3n;
+    for (const role of memberEntry.roles) {
+      const perms = BigInt(role.permissions || 0);
+      if ((perms & ADMINISTRATOR) === ADMINISTRATOR) return true;
+      if ((perms & MANAGE_MESSAGES) === MANAGE_MESSAGES) return true;
+    }
+    return false;
+  })();
+
+  const handleBulkDelete = async () => {
+    if (selectedMessages.size === 0 || bulkDeleting) return;
+    setBulkDeleting(true);
+    try {
+      await bulkDeleteMessages(currentChannel.id);
+    } catch (err) {
+      console.error('Bulk delete failed:', err);
+    }
+    setBulkDeleting(false);
+  };
+
+  const handleMessageSelect = (messageId, shiftKey) => {
+    if (!bulkSelectMode) return;
+    const msgIndex = messages.findIndex(m => m.id === messageId);
+    if (shiftKey && lastClickedIndex.current !== null && lastClickedIndex.current !== msgIndex) {
+      // Range select
+      const start = Math.min(lastClickedIndex.current, msgIndex);
+      const end = Math.max(lastClickedIndex.current, msgIndex);
+      const rangeIds = messages.slice(start, end + 1).map(m => m.id);
+      const state = useStore.getState();
+      const next = new Set(state.selectedMessages);
+      for (const id of rangeIds) {
+        if (next.size < 100) next.add(id);
+      }
+      useStore.setState({ selectedMessages: next });
+    } else {
+      toggleMessageSelect(messageId);
+    }
+    lastClickedIndex.current = msgIndex;
+  };
 
   const scrollToBottom = useCallback((smooth = true) => {
     if (messagesEndRef.current) {
@@ -52,6 +105,11 @@ export default function ChatArea() {
     setEditingId(null);
     setHasMore(true);
     isAtBottom.current = true;
+    lastClickedIndex.current = null;
+    // Exit bulk select mode on channel change
+    if (bulkSelectMode) {
+      useStore.setState({ bulkSelectMode: false, selectedMessages: new Set() });
+    }
     setTimeout(() => scrollToBottom(false), 100);
   }, [currentChannel?.id]);
 
@@ -356,6 +414,21 @@ export default function ChatArea() {
     };
   }, [currentChannel?.id]);
 
+  // Listen for bulk_message_delete socket event
+  useEffect(() => {
+    const socket = getSocket();
+    if (!socket) return;
+
+    const handleBulkDelete = ({ channelId, messageIds }) => {
+      if (channelId === currentChannel?.id) {
+        removeBulkMessages(messageIds);
+      }
+    };
+
+    socket.on('bulk_message_delete', handleBulkDelete);
+    return () => socket.off('bulk_message_delete', handleBulkDelete);
+  }, [currentChannel?.id]);
+
   // Auto-resize textarea
   useEffect(() => {
     const ta = textareaRef.current;
@@ -401,8 +474,27 @@ export default function ChatArea() {
         <span className="name">{channelName}</span>
         {currentChannel?.topic && <span className="topic">{currentChannel.topic}</span>}
         <div className="header-icons">
+          {currentChannel?.server_id && canManageMessages && (
+            <div
+              className="header-icon"
+              onClick={toggleBulkSelect}
+              title={bulkSelectMode ? 'Exit Select Mode' : 'Select Messages'}
+              style={bulkSelectMode ? { background: 'var(--brand-500)', color: 'white', borderRadius: 4 } : {}}
+            >
+              ☑
+            </div>
+          )}
           {currentChannel?.server_id && (
             <div className="header-icon" onClick={toggleInviteModal} title="Create Invite">📨</div>
+          )}
+          {currentChannel?.server_id && (
+            <div className="header-icon" onClick={() => useStore.getState().toggleEventsPanel()} title="Events">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                <rect x="3" y="4" width="18" height="18" rx="2" stroke="currentColor" strokeWidth="2"/>
+                <path d="M3 10h18" stroke="currentColor" strokeWidth="2"/>
+                <path d="M8 2v4M16 2v4" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/>
+              </svg>
+            </div>
           )}
           <div className="header-icon" onClick={() => setShowPins(!showPins)} title="Pinned Messages" style={{ position: 'relative' }}>
             📌
@@ -430,6 +522,26 @@ export default function ChatArea() {
           <SearchBar />
         </div>
       </div>
+
+      {/* Bulk Select Toolbar */}
+      {bulkSelectMode && (
+        <div className="bulk-action-toolbar">
+          <span className="bulk-count">{selectedMessages.size} selected</span>
+          <button className="bulk-btn bulk-select-all" onClick={selectAllMessages}>
+            Select All
+          </button>
+          <button
+            className="bulk-btn bulk-delete"
+            onClick={handleBulkDelete}
+            disabled={selectedMessages.size === 0 || bulkDeleting}
+          >
+            {bulkDeleting ? 'Deleting...' : `Delete Selected (${selectedMessages.size})`}
+          </button>
+          <button className="bulk-btn bulk-cancel" onClick={toggleBulkSelect}>
+            Cancel
+          </button>
+        </div>
+      )}
 
       {/* Messages */}
       <div className="messages-area" ref={messagesAreaRef} onScroll={handleScroll}>
@@ -473,6 +585,9 @@ export default function ChatArea() {
               onEdit={handleEdit}
               onReply={(m) => { setReplyingTo(m); textareaRef.current?.focus(); }}
               currentUserId={user.id}
+              bulkSelectMode={bulkSelectMode}
+              isSelected={selectedMessages.has(msg.id)}
+              onMessageSelect={handleMessageSelect}
             />
           ))
         )}
