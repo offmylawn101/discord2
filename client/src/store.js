@@ -94,6 +94,7 @@ export const useStore = create((set, get) => ({
       categories: data.categories || [],
       roles: data.roles || [],
       members: data.members || [],
+      serverEmojis: data.emojis || [],
       currentDm: null,
     });
     // Clear unread for this server
@@ -491,6 +492,27 @@ export const useStore = create((set, get) => ({
       currentServer: s.currentServer?.id === serverId ? { ...s.currentServer, icon: server.icon } : s.currentServer,
     }));
     return server;
+  },
+
+  // Emoji actions
+  uploadEmoji: async (serverId, name, file) => {
+    const formData = new FormData();
+    formData.append('image', file);
+    formData.append('name', name);
+    const emoji = await api.upload(`/servers/${serverId}/emojis`, formData);
+    set(s => ({ serverEmojis: [...s.serverEmojis, emoji] }));
+    return emoji;
+  },
+
+  deleteEmoji: async (serverId, emojiId) => {
+    await api.delete(`/servers/${serverId}/emojis/${emojiId}`);
+    set(s => ({ serverEmojis: s.serverEmojis.filter(e => e.id !== emojiId) }));
+  },
+
+  renameEmoji: async (serverId, emojiId, name) => {
+    const emoji = await api.patch(`/servers/${serverId}/emojis/${emojiId}`, { name });
+    set(s => ({ serverEmojis: s.serverEmojis.map(e => e.id === emojiId ? emoji : e) }));
+    return emoji;
   },
 
   // UI
