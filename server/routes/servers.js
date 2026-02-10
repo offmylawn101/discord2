@@ -6,6 +6,7 @@ const db = require('../models/database');
 const { authenticate } = require('../middleware/auth');
 const { PERMISSIONS, DEFAULT_PERMISSIONS, checkPermission } = require('../utils/permissions');
 const cache = require('../utils/cache');
+const { logAudit, AUDIT_ACTIONS } = require('../utils/auditLog');
 
 const router = express.Router();
 
@@ -176,6 +177,12 @@ router.patch('/:serverId', authenticate, async (req, res) => {
 
     await db.run(`UPDATE servers SET ${updates.join(', ')} WHERE id = ?`, values);
     await cache.del(`server:${serverId}:detail`);
+
+    await logAudit(serverId, req.userId, AUDIT_ACTIONS.SERVER_UPDATE, {
+      targetType: 'server', targetId: serverId,
+      changes: { name, description },
+    });
+
     const server = await db.get('SELECT * FROM servers WHERE id = ?', [serverId]);
     res.json(server);
   } catch (err) {
@@ -411,6 +418,56 @@ router.get('/:serverId/members', authenticate, async (req, res) => {
     });
   } catch (err) {
     console.error('Get members error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Get audit log
+router.get('/:serverId/audit-log', authenticate, async (req, res) => {
+  try {
+    const { serverId } = req.params;
+    const { before, limit = 50, action_type } = req.query;
+    const logLimit = Math.min(parseInt(limit) || 50, 100);
+
+    // Check permission
+    if (!await checkPermission(db, req.userId, serverId, null, PERMISSIONS.VIEW_AUDIT_LOG)) {
+      return res.status(403).json({ error: 'Missing permission to view audit log' });
+    }
+
+    let query = `
+      SELECT al.*, u.username, u.discriminator, u.avatar
+      FROM audit_log al
+      INNER JOIN users u ON u.id = al.user_id
+      WHERE al.server_id = ?
+    `;
+    const params = [serverId];
+
+    if (action_type) {
+      query += ' AND al.action = ?';
+      params.push(action_type);
+    }
+    if (before) {
+      query += ' AND al.created_at < ?';
+      params.push(before);
+    }
+
+    query += ' ORDER BY al.created_at DESC LIMIT ?';
+    params.push(logLimit);
+
+    const entries = await db.all(query, params);
+
+    // Parse changes JSON
+    for (const entry of entries) {
+      try {
+        entry.changes = JSON.parse(entry.changes || '{}');
+      } catch {
+        entry.changes = {};
+      }
+    }
+
+    res.json(entries);
+  } catch (err) {
+    console.error('Audit log error:', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
