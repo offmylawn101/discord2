@@ -351,4 +351,68 @@ router.get('/:serverId/search', authenticate, async (req, res) => {
   }
 });
 
+// Get server members (paginated)
+router.get('/:serverId/members', authenticate, async (req, res) => {
+  try {
+    const { serverId } = req.params;
+    const { after, limit = 50 } = req.query;
+    const memberLimit = Math.min(parseInt(limit) || 50, 100);
+
+    const member = await db.get('SELECT 1 FROM server_members WHERE server_id = ? AND user_id = ?', [serverId, req.userId]);
+    if (!member) return res.status(403).json({ error: 'Not a member' });
+
+    let query = `
+      SELECT u.id, u.username, u.discriminator, u.avatar, u.status, u.custom_status,
+             sm.nickname, sm.joined_at
+      FROM server_members sm
+      INNER JOIN users u ON u.id = sm.user_id
+      WHERE sm.server_id = ?
+    `;
+    const params = [serverId];
+
+    if (after) {
+      query += ' AND u.username > ?';
+      params.push(after);
+    }
+
+    query += ' ORDER BY u.username ASC LIMIT ?';
+    params.push(memberLimit + 1); // Fetch one extra to determine if there are more
+
+    let members = await db.all(query, params);
+    const hasMore = members.length > memberLimit;
+    if (hasMore) members = members.slice(0, memberLimit);
+
+    // Attach roles for each member
+    if (members.length > 0) {
+      const userIds = members.map(m => m.id);
+      const placeholders = userIds.map(() => '?').join(',');
+      const memberRoles = await db.all(
+        `SELECT mr.user_id, r.id, r.name, r.color, r.position, r.hoist
+         FROM member_roles mr
+         INNER JOIN roles r ON r.id = mr.role_id
+         WHERE mr.server_id = ? AND mr.user_id IN (${placeholders})
+         ORDER BY r.position DESC`,
+        [serverId, ...userIds]
+      );
+      const roleMap = {};
+      for (const mr of memberRoles) {
+        if (!roleMap[mr.user_id]) roleMap[mr.user_id] = [];
+        roleMap[mr.user_id].push({ id: mr.id, name: mr.name, color: mr.color, position: mr.position, hoist: mr.hoist });
+      }
+      for (const m of members) {
+        m.roles = roleMap[m.id] || [];
+      }
+    }
+
+    res.json({
+      members,
+      has_more: hasMore,
+      next_cursor: hasMore ? members[members.length - 1].username : null,
+    });
+  } catch (err) {
+    console.error('Get members error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 module.exports = router;
