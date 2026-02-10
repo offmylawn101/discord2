@@ -4,6 +4,7 @@ const db = require('../models/database');
 const { authenticate } = require('../middleware/auth');
 const { PERMISSIONS, checkPermission } = require('../utils/permissions');
 const cache = require('../utils/cache');
+const { logAudit, AUDIT_ACTIONS } = require('../utils/auditLog');
 
 const router = express.Router();
 
@@ -39,6 +40,12 @@ router.post('/:serverId/channels', authenticate, async (req, res) => {
 
     const channel = await db.get('SELECT * FROM channels WHERE id = ?', [id]);
     await cache.delPattern(`server:${serverId}:*`);
+
+    await logAudit(serverId, req.userId, AUDIT_ACTIONS.CHANNEL_CREATE, {
+      targetType: 'channel', targetId: channel.id,
+      changes: { name: channel.name, type: channel.type },
+    });
+
     res.status(201).json(channel);
   } catch (err) {
     console.error('Create channel error:', err);
@@ -104,6 +111,11 @@ router.patch('/channels/:channelId', authenticate, async (req, res) => {
     await db.run(`UPDATE channels SET ${updates.join(', ')} WHERE id = ?`, values);
     if (channel.server_id) {
       await cache.delPattern(`server:${channel.server_id}:*`);
+
+      await logAudit(channel.server_id, req.userId, AUDIT_ACTIONS.CHANNEL_UPDATE, {
+        targetType: 'channel', targetId: channelId,
+        changes: { name, topic, slowmode, nsfw, bitrate, user_limit, position, category_id },
+      });
     }
     const updated = await db.get('SELECT * FROM channels WHERE id = ?', [channelId]);
     res.json(updated);
@@ -155,6 +167,11 @@ router.delete('/channels/:channelId', authenticate, async (req, res) => {
     await db.run('DELETE FROM channels WHERE id = ?', [channelId]);
     if (channel.server_id) {
       await cache.delPattern(`server:${channel.server_id}:*`);
+
+      await logAudit(channel.server_id, req.userId, AUDIT_ACTIONS.CHANNEL_DELETE, {
+        targetType: 'channel', targetId: channelId,
+        changes: { name: channel.name, type: channel.type },
+      });
     }
     res.json({ deleted: true });
   } catch (err) {
