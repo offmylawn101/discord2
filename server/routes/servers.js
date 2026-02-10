@@ -237,4 +237,118 @@ router.delete('/:serverId/members/@me', authenticate, async (req, res) => {
   }
 });
 
+// Server-wide message search
+router.get('/:serverId/search', authenticate, async (req, res) => {
+  try {
+    const { serverId } = req.params;
+    const { q, channel_id, author_id, has, before, after, limit = 25 } = req.query;
+    if (!q) return res.json({ messages: [], total: 0 });
+
+    // Verify membership
+    const member = await db.get('SELECT 1 FROM server_members WHERE server_id = ? AND user_id = ?', [serverId, req.userId]);
+    if (!member) return res.status(403).json({ error: 'Not a member' });
+
+    const searchLimit = Math.min(parseInt(limit) || 25, 50);
+    let messages;
+
+    if (db.isPg) {
+      const tsquery = q.split(/\s+/).filter(Boolean).join(' & ');
+      let pgSql = `
+        SELECT m.*, u.username, u.discriminator, u.avatar, c.name as channel_name,
+          ts_rank(m.search_vector, to_tsquery('english', $1)) as rank
+        FROM messages m
+        INNER JOIN users u ON u.id = m.author_id
+        INNER JOIN channels c ON c.id = m.channel_id
+        WHERE c.server_id = $2 AND m.search_vector @@ to_tsquery('english', $1)
+      `;
+      const params = [tsquery, serverId];
+      let paramIdx = 3;
+
+      if (channel_id) {
+        pgSql += ` AND m.channel_id = $${paramIdx}`;
+        params.push(channel_id);
+        paramIdx++;
+      }
+      if (author_id) {
+        pgSql += ` AND m.author_id = $${paramIdx}`;
+        params.push(author_id);
+        paramIdx++;
+      }
+      if (has === 'link') pgSql += ` AND m.content LIKE '%http%'`;
+      if (has === 'file') pgSql += ` AND EXISTS (SELECT 1 FROM attachments a WHERE a.message_id = m.id)`;
+      if (before) {
+        pgSql += ` AND m.created_at < $${paramIdx}`;
+        params.push(before);
+        paramIdx++;
+      }
+      if (after) {
+        pgSql += ` AND m.created_at > $${paramIdx}`;
+        params.push(after);
+        paramIdx++;
+      }
+
+      pgSql += ` ORDER BY rank DESC, m.created_at DESC LIMIT $${paramIdx}`;
+      params.push(searchLimit);
+
+      messages = await db.all(pgSql, params);
+    } else {
+      // SQLite with FTS5
+      let sql = `
+        SELECT m.*, u.username, u.discriminator, u.avatar, c.name as channel_name
+        FROM messages m
+        INNER JOIN users u ON u.id = m.author_id
+        INNER JOIN channels c ON c.id = m.channel_id
+        INNER JOIN messages_fts fts ON fts.rowid = m.rowid
+        WHERE c.server_id = ? AND messages_fts MATCH ?
+      `;
+      const params = [serverId, q];
+
+      if (channel_id) {
+        sql += ' AND m.channel_id = ?';
+        params.push(channel_id);
+      }
+      if (author_id) {
+        sql += ' AND m.author_id = ?';
+        params.push(author_id);
+      }
+      if (has === 'link') sql += ` AND m.content LIKE '%http%'`;
+      if (has === 'file') sql += ` AND EXISTS (SELECT 1 FROM attachments a WHERE a.message_id = m.id)`;
+      if (before) {
+        sql += ' AND m.created_at < ?';
+        params.push(before);
+      }
+      if (after) {
+        sql += ' AND m.created_at > ?';
+        params.push(after);
+      }
+
+      sql += ' ORDER BY m.created_at DESC LIMIT ?';
+      params.push(searchLimit);
+
+      messages = await db.all(sql, params);
+    }
+
+    res.json({ messages, total: messages.length });
+  } catch (err) {
+    console.error('Server search error:', err);
+    // Fallback to LIKE
+    try {
+      const { serverId } = req.params;
+      const { q, limit = 25 } = req.query;
+      const searchLimit = Math.min(parseInt(limit) || 25, 50);
+      const messages = await db.all(`
+        SELECT m.*, u.username, u.discriminator, u.avatar, c.name as channel_name
+        FROM messages m
+        INNER JOIN users u ON u.id = m.author_id
+        INNER JOIN channels c ON c.id = m.channel_id
+        WHERE c.server_id = ? AND m.content LIKE ?
+        ORDER BY m.created_at DESC LIMIT ?
+      `, [serverId, `%${q}%`, searchLimit]);
+      res.json({ messages, total: messages.length });
+    } catch (fallbackErr) {
+      res.status(500).json({ error: 'Search failed' });
+    }
+  }
+});
+
 module.exports = router;
