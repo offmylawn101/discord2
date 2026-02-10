@@ -4,6 +4,13 @@ import { useStore } from '../store';
 // Discord-like markdown parser
 // Supports: **bold**, *italic*, ~~strikethrough~~, __underline__, `code`, ```code blocks```, ||spoiler||, > blockquote, [links](url), @mentions
 
+// Helper to get custom emoji image URL from store
+function getCustomEmojiUrl(emojiId) {
+  const state = useStore.getState();
+  const emoji = (state.serverEmojis || []).find(e => e.id === emojiId);
+  return emoji?.image_url || `/uploads/emojis/${emojiId}.png`;
+}
+
 const mentionStyle = {
   background: 'rgba(88, 101, 242, 0.3)',
   color: '#dee0fc',
@@ -164,6 +171,17 @@ function renderInline(text) {
     { regex: /~~(.+?)~~/, render: (m) => <del key={`s-${keyCounter++}`}>{m[1]}</del> },
     // Spoiler
     { regex: /\|\|(.+?)\|\|/, render: (m) => <span key={`sp-${keyCounter++}`} className="md-spoiler" onClick={e => e.currentTarget.classList.toggle('revealed')}>{m[1]}</span> },
+    // Custom emojis <:name:id>
+    { regex: /<:([a-zA-Z0-9_]+):([a-f0-9-]+)>/, render: (m) => (
+      <img
+        key={`ce-${keyCounter++}`}
+        className="custom-emoji"
+        src={getCustomEmojiUrl(m[2])}
+        alt={`:${m[1]}:`}
+        title={`:${m[1]}:`}
+        style={{ width: 22, height: 22, objectFit: 'contain', verticalAlign: 'middle', margin: '0 1px' }}
+      />
+    )},
     // User mentions <@userId>
     { regex: /<@([a-f0-9-]+)>/, render: (m) => {
       const state = useStore.getState();
