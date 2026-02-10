@@ -41,9 +41,11 @@ router.get('/:channelId/messages', authenticate, async (req, res) => {
     }
 
     let query = `
-      SELECT m.*, u.username, u.discriminator, u.avatar
+      SELECT m.*, u.username, u.discriminator, u.avatar, sm.nickname
       FROM messages m
       INNER JOIN users u ON u.id = m.author_id
+      LEFT JOIN channels ch ON ch.id = m.channel_id
+      LEFT JOIN server_members sm ON sm.server_id = ch.server_id AND sm.user_id = m.author_id
       WHERE m.channel_id = ?
     `;
     const params = [channelId];
@@ -207,8 +209,11 @@ router.post('/:channelId/messages', authenticate, messageLimiter, upload.array('
     });
 
     const message = await db.get(`
-      SELECT m.*, u.username, u.discriminator, u.avatar
-      FROM messages m INNER JOIN users u ON u.id = m.author_id
+      SELECT m.*, u.username, u.discriminator, u.avatar, sm.nickname
+      FROM messages m
+      INNER JOIN users u ON u.id = m.author_id
+      LEFT JOIN channels ch ON ch.id = m.channel_id
+      LEFT JOIN server_members sm ON sm.server_id = ch.server_id AND sm.user_id = m.author_id
       WHERE m.id = ?
     `, [messageId]);
 
