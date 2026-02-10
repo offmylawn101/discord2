@@ -327,6 +327,20 @@ async function initialize() {
         created_at TIMESTAMP DEFAULT NOW()
       );
 
+      CREATE TABLE IF NOT EXISTS threads (
+        id TEXT PRIMARY KEY,
+        channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+        parent_message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+        name TEXT NOT NULL DEFAULT '',
+        owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        message_count INTEGER DEFAULT 0,
+        last_message_at TIMESTAMP DEFAULT NOW(),
+        archived INTEGER DEFAULT 0,
+        created_at TIMESTAMP DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_threads_channel ON threads(channel_id);
+      CREATE INDEX IF NOT EXISTS idx_threads_parent ON threads(parent_message_id);
+
       CREATE INDEX IF NOT EXISTS idx_messages_channel ON messages(channel_id, created_at);
       CREATE INDEX IF NOT EXISTS idx_messages_author ON messages(author_id);
       CREATE INDEX IF NOT EXISTS idx_server_members_user ON server_members(user_id);
@@ -493,6 +507,19 @@ async function initialize() {
         action TEXT NOT NULL, target_type TEXT, target_id TEXT, changes TEXT DEFAULT '{}',
         reason TEXT DEFAULT '', created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       );
+      CREATE TABLE IF NOT EXISTS threads (
+        id TEXT PRIMARY KEY,
+        channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+        parent_message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+        name TEXT NOT NULL DEFAULT '',
+        owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        message_count INTEGER DEFAULT 0,
+        last_message_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        archived INTEGER DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE INDEX IF NOT EXISTS idx_threads_channel ON threads(channel_id);
+      CREATE INDEX IF NOT EXISTS idx_threads_parent ON threads(parent_message_id);
       CREATE INDEX IF NOT EXISTS idx_messages_channel ON messages(channel_id, created_at);
       CREATE INDEX IF NOT EXISTS idx_messages_author ON messages(author_id);
       CREATE INDEX IF NOT EXISTS idx_server_members_user ON server_members(user_id);
