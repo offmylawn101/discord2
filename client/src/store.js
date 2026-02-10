@@ -16,6 +16,9 @@ export const useStore = create((set, get) => ({
   roles: [],
   members: [],
 
+  // Emojis
+  serverEmojis: [],
+
   // Messages
   currentChannel: null,
   messages: [],
@@ -34,6 +37,10 @@ export const useStore = create((set, get) => ({
   voiceChannel: null,
   voiceParticipants: [],
   voiceState: { selfMute: false, selfDeaf: false },
+
+  // Quick Switcher
+  recentChannels: [],
+  showQuickSwitcher: false,
 
   // Friends
   relationships: [],
@@ -112,6 +119,12 @@ export const useStore = create((set, get) => ({
   selectChannel: async (channel) => {
     const prev = get().currentChannel;
     set({ currentChannel: channel, messages: [], loadingMessages: true, replyingTo: null });
+    // Track recent channels for quick switcher
+    set(s => {
+      const entry = { ...channel, server_id: channel.server_id || s.currentServer?.id, _visitedAt: Date.now() };
+      const filtered = s.recentChannels.filter(c => c.id !== channel.id);
+      return { recentChannels: [entry, ...filtered].slice(0, 8) };
+    });
     // Clear unread for this channel
     set(s => {
       const unreadChannels = { ...s.unreadChannels };
@@ -320,6 +333,20 @@ export const useStore = create((set, get) => ({
   },
 
   // Reaction actions
+  pinMessage: async (channelId, messageId) => {
+    await api.put(`/${channelId}/pins/${messageId}`);
+    set(s => ({
+      messages: s.messages.map(m => m.id === messageId ? { ...m, pinned: 1 } : m),
+    }));
+  },
+
+  unpinMessage: async (channelId, messageId) => {
+    await api.delete(`/${channelId}/pins/${messageId}`);
+    set(s => ({
+      messages: s.messages.map(m => m.id === messageId ? { ...m, pinned: 0 } : m),
+    }));
+  },
+
   addReaction: async (channelId, messageId, emoji) => {
     await api.put(`/${channelId}/messages/${messageId}/reactions/${encodeURIComponent(emoji)}`);
   },
@@ -351,6 +378,12 @@ export const useStore = create((set, get) => ({
 
   selectDm: (dm) => {
     set({ currentDm: dm, currentServer: null });
+    // Track DM in recent channels for quick switcher
+    set(s => {
+      const entry = { ...dm, _isDm: true, _visitedAt: Date.now() };
+      const filtered = s.recentChannels.filter(c => c.id !== dm.id);
+      return { recentChannels: [entry, ...filtered].slice(0, 8) };
+    });
     get().selectChannel(dm);
   },
 
@@ -465,5 +498,6 @@ export const useStore = create((set, get) => ({
   toggleServerSettings: () => set(s => ({ showServerSettings: !s.showServerSettings })),
   toggleCreateServer: () => set(s => ({ showCreateServer: !s.showCreateServer })),
   toggleInviteModal: () => set(s => ({ showInviteModal: !s.showInviteModal })),
+  toggleQuickSwitcher: () => set(s => ({ showQuickSwitcher: !s.showQuickSwitcher })),
   setReplyingTo: (msg) => set({ replyingTo: msg }),
 }));

@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { api } from '../utils/api';
 import { useStore } from '../store';
+import { getSocket } from '../utils/socket';
 
 export default function PinnedMessages({ onClose }) {
   const [pins, setPins] = useState([]);
   const [loading, setLoading] = useState(true);
-  const { currentChannel } = useStore();
+  const { currentChannel, unpinMessage } = useStore();
   const panelRef = useRef(null);
 
   useEffect(() => {
@@ -26,6 +27,23 @@ export default function PinnedMessages({ onClose }) {
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, [onClose]);
+
+  const handleUnpin = async (messageId) => {
+    const socket = getSocket();
+    await unpinMessage(currentChannel.id, messageId);
+    socket?.emit('message_unpin', { channelId: currentChannel.id, messageId });
+    setPins(prev => prev.filter(p => p.id !== messageId));
+  };
+
+  const handleJump = (messageId) => {
+    onClose();
+    const el = document.querySelector(`[data-message-id="${messageId}"]`);
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      el.style.background = 'var(--bg-modifier-active)';
+      setTimeout(() => { el.style.background = ''; }, 2000);
+    }
+  };
 
   const formatTime = (d) => {
     const date = new Date(d);
@@ -56,8 +74,29 @@ export default function PinnedMessages({ onClose }) {
               </div>
               <span style={{ fontWeight: 600, fontSize: 14, color: 'var(--header-primary)' }}>{pin.username}</span>
               <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{formatTime(pin.created_at)}</span>
+              <button
+                onClick={(e) => { e.stopPropagation(); handleUnpin(pin.id); }}
+                title="Unpin Message"
+                style={{
+                  marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer',
+                  color: 'var(--text-muted)', fontSize: 16, padding: '0 4px', lineHeight: 1,
+                }}
+                onMouseEnter={e => e.target.style.color = 'var(--text-danger)'}
+                onMouseLeave={e => e.target.style.color = 'var(--text-muted)'}
+              >
+                ✕
+              </button>
             </div>
             <div style={{ fontSize: 14, color: 'var(--text-normal)', lineHeight: 1.4 }}>{pin.content}</div>
+            <div
+              onClick={() => handleJump(pin.id)}
+              style={{
+                fontSize: 12, color: 'var(--text-link)', cursor: 'pointer',
+                marginTop: 4, fontWeight: 500,
+              }}
+            >
+              Jump to message
+            </div>
           </div>
         ))
       )}

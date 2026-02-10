@@ -15,7 +15,7 @@ export default function MessageItem({
   const [showProfile, setShowProfile] = useState(null);
   const [lightboxImage, setLightboxImage] = useState(null);
   const [contextMenu, setContextMenu] = useState(null);
-  const { addReaction, removeReaction, deleteMessage, currentChannel } = useStore();
+  const { addReaction, removeReaction, deleteMessage, pinMessage, unpinMessage, currentChannel } = useStore();
   const embeds = useStore(s => s.messageEmbeds[message.id]);
 
   const formatTime = (dateStr) => {
@@ -49,6 +49,17 @@ export default function MessageItem({
     socket?.emit('message_delete', { channelId: currentChannel.id, messageId: message.id });
   };
 
+  const handlePin = async () => {
+    const socket = getSocket();
+    if (message.pinned) {
+      await unpinMessage(currentChannel.id, message.id);
+      socket?.emit('message_unpin', { channelId: currentChannel.id, messageId: message.id });
+    } else {
+      await pinMessage(currentChannel.id, message.id);
+      socket?.emit('message_pin', { channelId: currentChannel.id, messageId: message.id });
+    }
+  };
+
   const handleContextMenu = (e) => {
     e.preventDefault();
     const items = [
@@ -56,6 +67,8 @@ export default function MessageItem({
       { label: 'Add Reaction', icon: '😀', action: () => setShowEmoji(true) },
       { label: 'Copy Text', icon: '📋', action: () => navigator.clipboard.writeText(message.content) },
       { label: 'Copy Message ID', icon: '#', action: () => navigator.clipboard.writeText(message.id) },
+      { separator: true },
+      { label: message.pinned ? 'Unpin Message' : 'Pin Message', icon: '📌', action: handlePin },
     ];
     if (message.author_id === currentUserId) {
       items.push({ separator: true });
@@ -304,6 +317,7 @@ export default function MessageItem({
       <div className="message-actions">
         <button className="message-action-btn" onClick={() => setShowEmoji(!showEmoji)} title="Add Reaction">😀</button>
         <button className="message-action-btn" onClick={() => onReply(message)} title="Reply">↩</button>
+        <button className="message-action-btn" onClick={handlePin} title={message.pinned ? 'Unpin Message' : 'Pin Message'} style={message.pinned ? { color: 'var(--brand-500)' } : {}}>📌</button>
         {!message.thread_id && (
           <button className="message-action-btn" onClick={handleCreateThread} title="Create Thread">&#x1F9F5;</button>
         )}

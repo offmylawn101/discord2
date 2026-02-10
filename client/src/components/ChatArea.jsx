@@ -17,6 +17,7 @@ export default function ChatArea() {
   const [editingId, setEditingId] = useState(null);
   const [editContent, setEditContent] = useState('');
   const [showPins, setShowPins] = useState(false);
+  const [pinCount, setPinCount] = useState(0);
   const [showMembers, setShowMembers] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
@@ -299,6 +300,48 @@ export default function ChatArea() {
     return () => socket.off('message_embeds', handler);
   }, []);
 
+  // Fetch pin count on channel change
+  useEffect(() => {
+    if (currentChannel) {
+      api.get(`/${currentChannel.id}/pins`)
+        .then(pins => setPinCount(pins.length))
+        .catch(() => setPinCount(0));
+    } else {
+      setPinCount(0);
+    }
+  }, [currentChannel?.id]);
+
+  // Listen for pin/unpin socket events
+  useEffect(() => {
+    const socket = getSocket();
+    if (!socket) return;
+
+    const handlePin = ({ channelId, messageId }) => {
+      if (channelId === currentChannel?.id) {
+        useStore.setState(s => ({
+          messages: s.messages.map(m => m.id === messageId ? { ...m, pinned: 1 } : m),
+        }));
+        setPinCount(prev => prev + 1);
+      }
+    };
+
+    const handleUnpin = ({ channelId, messageId }) => {
+      if (channelId === currentChannel?.id) {
+        useStore.setState(s => ({
+          messages: s.messages.map(m => m.id === messageId ? { ...m, pinned: 0 } : m),
+        }));
+        setPinCount(prev => Math.max(0, prev - 1));
+      }
+    };
+
+    socket.on('message_pin', handlePin);
+    socket.on('message_unpin', handleUnpin);
+    return () => {
+      socket.off('message_pin', handlePin);
+      socket.off('message_unpin', handleUnpin);
+    };
+  }, [currentChannel?.id]);
+
   // Auto-resize textarea
   useEffect(() => {
     const ta = textareaRef.current;
@@ -349,6 +392,17 @@ export default function ChatArea() {
           )}
           <div className="header-icon" onClick={() => setShowPins(!showPins)} title="Pinned Messages" style={{ position: 'relative' }}>
             📌
+            {pinCount > 0 && (
+              <span style={{
+                position: 'absolute', top: -4, right: -4,
+                background: 'var(--brand-500)', color: 'white',
+                borderRadius: '50%', minWidth: 16, height: 16,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: 10, fontWeight: 700, padding: '0 3px',
+              }}>
+                {pinCount}
+              </span>
+            )}
             {showPins && <PinnedMessages onClose={() => setShowPins(false)} />}
           </div>
           {currentChannel?.server_id && (

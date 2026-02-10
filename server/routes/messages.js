@@ -379,6 +379,24 @@ router.put('/:channelId/pins/:messageId', authenticate, async (req, res) => {
   }
 });
 
+// Unpin message
+router.delete('/:channelId/pins/:messageId', authenticate, async (req, res) => {
+  try {
+    const { channelId, messageId } = req.params;
+    const channel = await db.get('SELECT * FROM channels WHERE id = ?', [channelId]);
+    if (channel?.server_id) {
+      if (!await checkPermission(db, req.userId, channel.server_id, channelId, PERMISSIONS.MANAGE_MESSAGES)) {
+        return res.status(403).json({ error: 'Missing MANAGE_MESSAGES permission' });
+      }
+    }
+
+    await db.run('UPDATE messages SET pinned = 0 WHERE id = ? AND channel_id = ?', [messageId, channelId]);
+    res.json({ unpinned: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // Get pinned messages
 router.get('/:channelId/pins', authenticate, async (req, res) => {
   try {

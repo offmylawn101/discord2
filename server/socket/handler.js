@@ -89,6 +89,14 @@ function setupSocketHandlers(io) {
       io.to(`channel:${channelId}`).emit('message_delete', { channelId, messageId });
     });
 
+    socket.on('message_pin', ({ channelId, messageId }) => {
+      io.to(`channel:${channelId}`).emit('message_pin', { channelId, messageId });
+    });
+
+    socket.on('message_unpin', ({ channelId, messageId }) => {
+      io.to(`channel:${channelId}`).emit('message_unpin', { channelId, messageId });
+    });
+
     // --- Typing ---
 
     socket.on('typing_start', (channelId) => {
