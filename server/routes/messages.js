@@ -455,4 +455,168 @@ router.delete('/:channelId/messages/:messageId/reactions/:emoji', authenticate, 
   }
 });
 
+// Create thread from message
+router.post('/:channelId/messages/:messageId/threads', authenticate, async (req, res) => {
+  try {
+    const { channelId, messageId } = req.params;
+    const { name } = req.body;
+
+    const message = await db.get('SELECT * FROM messages WHERE id = ? AND channel_id = ?', [messageId, channelId]);
+    if (!message) return res.status(404).json({ error: 'Message not found' });
+
+    // Check if thread already exists for this message
+    const existing = await db.get('SELECT * FROM threads WHERE parent_message_id = ?', [messageId]);
+    if (existing) return res.status(400).json({ error: 'Thread already exists for this message' });
+
+    const threadId = uuidv4();
+    const threadName = name || message.content?.slice(0, 50) || 'Thread';
+
+    await db.run(`
+      INSERT INTO threads (id, channel_id, parent_message_id, name, owner_id)
+      VALUES (?, ?, ?, ?, ?)
+    `, [threadId, channelId, messageId, threadName, req.userId]);
+
+    // Update the original message to reference the thread
+    await db.run('UPDATE messages SET thread_id = ? WHERE id = ?', [threadId, messageId]);
+
+    const thread = await db.get(`
+      SELECT t.*, u.username as owner_username
+      FROM threads t
+      INNER JOIN users u ON u.id = t.owner_id
+      WHERE t.id = ?
+    `, [threadId]);
+
+    // Notify channel about new thread
+    const io = req.app.get('io');
+    io?.to(`channel:${channelId}`).emit('thread_create', { ...thread, parent_message: message });
+
+    res.status(201).json(thread);
+  } catch (err) {
+    console.error('Create thread error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Get threads for a channel
+router.get('/:channelId/threads', authenticate, async (req, res) => {
+  try {
+    const { channelId } = req.params;
+    const { archived = '0' } = req.query;
+
+    const threads = await db.all(`
+      SELECT t.*, u.username as owner_username,
+        (SELECT content FROM messages WHERE id = t.parent_message_id) as parent_content
+      FROM threads t
+      INNER JOIN users u ON u.id = t.owner_id
+      WHERE t.channel_id = ? AND t.archived = ?
+      ORDER BY t.last_message_at DESC
+    `, [channelId, parseInt(archived)]);
+
+    res.json(threads);
+  } catch (err) {
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Get thread messages
+router.get('/threads/:threadId/messages', authenticate, async (req, res) => {
+  try {
+    const { threadId } = req.params;
+    const { before, limit = 50 } = req.query;
+    const messageLimit = Math.min(parseInt(limit) || 50, 100);
+
+    const thread = await db.get('SELECT * FROM threads WHERE id = ?', [threadId]);
+    if (!thread) return res.status(404).json({ error: 'Thread not found' });
+
+    let query = `
+      SELECT m.*, u.username, u.discriminator, u.avatar
+      FROM messages m
+      INNER JOIN users u ON u.id = m.author_id
+      WHERE m.thread_id = ?
+    `;
+    const params = [threadId];
+
+    if (before) {
+      query += ' AND m.created_at < (SELECT created_at FROM messages WHERE id = ?)';
+      params.push(before);
+    }
+
+    query += ' ORDER BY m.created_at ASC LIMIT ?';
+    params.push(messageLimit);
+
+    const messages = await db.all(query, params);
+
+    // Batch load attachments
+    if (messages.length > 0) {
+      const msgIds = messages.map(m => m.id);
+      const placeholders = msgIds.map(() => '?').join(',');
+      const allAttachments = await db.all(
+        `SELECT * FROM attachments WHERE message_id IN (${placeholders})`, msgIds
+      );
+      const attMap = {};
+      for (const att of allAttachments) {
+        if (!attMap[att.message_id]) attMap[att.message_id] = [];
+        attMap[att.message_id].push(att);
+      }
+      for (const msg of messages) {
+        msg.attachments = attMap[msg.id] || [];
+        msg.reactions = [];
+      }
+    }
+
+    res.json(messages);
+  } catch (err) {
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Post message to thread
+router.post('/threads/:threadId/messages', authenticate, async (req, res) => {
+  try {
+    const { threadId } = req.params;
+    const { content } = req.body;
+    if (!content?.trim()) return res.status(400).json({ error: 'Content required' });
+
+    const thread = await db.get('SELECT * FROM threads WHERE id = ?', [threadId]);
+    if (!thread) return res.status(404).json({ error: 'Thread not found' });
+    if (thread.archived) return res.status(400).json({ error: 'Thread is archived' });
+
+    const messageId = uuidv4();
+    await db.run(`
+      INSERT INTO messages (id, channel_id, author_id, content, thread_id)
+      VALUES (?, ?, ?, ?, ?)
+    `, [messageId, thread.channel_id, req.userId, content, threadId]);
+
+    // Update thread metadata
+    await db.run(`
+      UPDATE threads SET message_count = message_count + 1, last_message_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `, [threadId]);
+
+    const message = await db.get(`
+      SELECT m.*, u.username, u.discriminator, u.avatar
+      FROM messages m INNER JOIN users u ON u.id = m.author_id
+      WHERE m.id = ?
+    `, [messageId]);
+    message.attachments = [];
+    message.reactions = [];
+
+    // Broadcast to thread listeners
+    const io = req.app.get('io');
+    io?.to(`thread:${threadId}`).emit('thread_message_create', { ...message, threadId });
+
+    // Also notify parent channel about thread activity
+    io?.to(`channel:${thread.channel_id}`).emit('thread_update', {
+      threadId, message_count: thread.message_count + 1,
+      last_message_at: new Date().toISOString(),
+      parent_message_id: thread.parent_message_id,
+    });
+
+    res.status(201).json(message);
+  } catch (err) {
+    console.error('Thread message error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 module.exports = router;
