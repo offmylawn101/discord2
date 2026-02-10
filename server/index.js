@@ -22,6 +22,9 @@ const dmRoutes = require('./routes/dms');
 const relationshipRoutes = require('./routes/relationships');
 const eventRoutes = require('./routes/events');
 const automodRoutes = require('./routes/automod');
+const webhookRoutes = require('./routes/webhooks');
+const discoverRoutes = require('./routes/discover');
+const notificationRoutes = require('./routes/notifications');
 
 const app = express();
 const server = http.createServer(app);
@@ -92,6 +95,10 @@ app.use('/api/servers', authenticate, eventRoutes);
 app.use('/api', authenticate, automodRoutes);
 app.use('/api/dms', authenticate, dmRoutes);
 app.use('/api/relationships', authenticate, relationshipRoutes);
+app.use('/api/webhooks', webhookRoutes);  // Webhook execution is public (no auth), management routes handle auth internally
+app.use('/api', webhookRoutes);          // For /api/servers/:serverId/webhooks and /api/channels/:channelId/webhooks
+app.use('/api/discover', discoverRoutes);
+app.use('/api/notifications', authenticate, notificationRoutes);
 
 // Users search
 const db = require('./models/database');

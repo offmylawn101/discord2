@@ -361,6 +361,106 @@ export default function ChatArea() {
     });
   };
 
+  // Formatting toolbar helpers
+  const applyFormat = (prefix, suffix) => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const text = textarea.value;
+    const selected = text.substring(start, end);
+    const newText = text.substring(0, start) + prefix + selected + suffix + text.substring(end);
+    setContent(newText);
+    setTimeout(() => {
+      textarea.focus();
+      if (selected) {
+        textarea.setSelectionRange(start + prefix.length, end + prefix.length);
+      } else {
+        textarea.setSelectionRange(start + prefix.length, start + prefix.length);
+      }
+    }, 0);
+  };
+
+  const applyLinePrefix = (prefix) => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const text = textarea.value;
+    const selected = text.substring(start, end);
+    if (selected) {
+      const lines = selected.split('\n');
+      const prefixed = lines.map((line, i) => {
+        if (prefix === '1. ') {
+          return `${i + 1}. ${line}`;
+        }
+        return prefix + line;
+      }).join('\n');
+      const newText = text.substring(0, start) + prefixed + text.substring(end);
+      setContent(newText);
+      setTimeout(() => {
+        textarea.focus();
+        textarea.setSelectionRange(start, start + prefixed.length);
+      }, 0);
+    } else {
+      const newText = text.substring(0, start) + prefix + text.substring(end);
+      setContent(newText);
+      setTimeout(() => {
+        textarea.focus();
+        const pos = start + prefix.length;
+        textarea.setSelectionRange(pos, pos);
+      }, 0);
+    }
+  };
+
+  const applyCodeBlock = () => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const text = textarea.value;
+    const selected = text.substring(start, end);
+    const prefix = '```\n';
+    const suffix = '\n```';
+    const newText = text.substring(0, start) + prefix + selected + suffix + text.substring(end);
+    setContent(newText);
+    setTimeout(() => {
+      textarea.focus();
+      if (selected) {
+        textarea.setSelectionRange(start + prefix.length, end + prefix.length);
+      } else {
+        textarea.setSelectionRange(start + prefix.length, start + prefix.length);
+      }
+    }, 0);
+  };
+
+  const applyLink = () => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const text = textarea.value;
+    const selected = text.substring(start, end);
+    if (selected) {
+      const newText = text.substring(0, start) + '[' + selected + '](url)' + text.substring(end);
+      setContent(newText);
+      setTimeout(() => {
+        textarea.focus();
+        // Select "url" so user can type the URL
+        const urlStart = start + selected.length + 2;
+        textarea.setSelectionRange(urlStart, urlStart + 3);
+      }, 0);
+    } else {
+      const newText = text.substring(0, start) + '[link text](url)' + text.substring(end);
+      setContent(newText);
+      setTimeout(() => {
+        textarea.focus();
+        // Select "link text" so user can type
+        textarea.setSelectionRange(start + 1, start + 10);
+      }, 0);
+    }
+  };
+
   // Listen for message embeds
   useEffect(() => {
     const socket = getSocket();
@@ -671,6 +771,45 @@ export default function ChatArea() {
             )}
           </div>
         )}
+
+        <div className={`formatting-toolbar${replyingTo || files.length > 0 ? ' no-top-radius' : ''}`}>
+          <button className="format-btn" onClick={() => applyFormat('**', '**')} title="Bold (Ctrl+B)">
+            <span className="format-bold">B</span>
+          </button>
+          <button className="format-btn" onClick={() => applyFormat('*', '*')} title="Italic (Ctrl+I)">
+            <span className="format-italic">I</span>
+          </button>
+          <button className="format-btn" onClick={() => applyFormat('__', '__')} title="Underline (Ctrl+U)">
+            <span className="format-underline">U</span>
+          </button>
+          <button className="format-btn" onClick={() => applyFormat('~~', '~~')} title="Strikethrough">
+            <span className="format-strike">S</span>
+          </button>
+          <div className="format-divider" />
+          <button className="format-btn" onClick={() => applyFormat('`', '`')} title="Inline Code">
+            <span className="format-code">&lt;/&gt;</span>
+          </button>
+          <button className="format-btn" onClick={applyCodeBlock} title="Code Block">
+            <span className="format-code">```</span>
+          </button>
+          <div className="format-divider" />
+          <button className="format-btn" onClick={() => applyFormat('||', '||')} title="Spoiler">
+            ||
+          </button>
+          <button className="format-btn" onClick={() => applyLinePrefix('> ')} title="Quote">
+            &gt;
+          </button>
+          <div className="format-divider" />
+          <button className="format-btn" onClick={applyLink} title="Link">
+            link
+          </button>
+          <button className="format-btn" onClick={() => applyLinePrefix('1. ')} title="Ordered List">
+            1.
+          </button>
+          <button className="format-btn" onClick={() => applyLinePrefix('- ')} title="Unordered List">
+            &#8226;
+          </button>
+        </div>
 
         <div className="message-input-wrapper">
           <button className="attach-btn" onClick={() => fileInputRef.current?.click()} title="Attach files">

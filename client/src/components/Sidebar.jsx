@@ -1,10 +1,23 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useStore } from '../store';
 import { getSocket } from '../utils/socket';
 import { PERMISSIONS, hasPermission } from '../utils/permissions';
 import VoicePanel from './VoicePanel';
 import StatusPicker from './StatusPicker';
+
+// Bell-slash SVG icon for muted indicator
+function BellSlashIcon({ size = 14 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" style={{ flexShrink: 0 }}>
+      <path
+        d="M12 22c1.1 0 2-.9 2-2h-4c0 1.1.9 2 2 2zm6-6v-5c0-3.07-1.63-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C9.37 5.13 8.1 6.21 7.46 7.6L18 18z"
+        fill="currentColor"
+      />
+      <path d="M3.27 3L2 4.27l2.92 2.92C4.34 8.36 4 9.62 4 11v5l-2 2v1h15.73l2 2L21.27 19.73 3.27 3z" fill="currentColor" />
+    </svg>
+  );
+}
 
 export default function Sidebar({ isHome }) {
   const {
@@ -18,6 +31,9 @@ export default function Sidebar({ isHome }) {
   const [showStatusPicker, setShowStatusPicker] = useState(false);
   const [dragChannelId, setDragChannelId] = useState(null);
   const [dropTarget, setDropTarget] = useState(null); // { id, position: 'above' | 'below' }
+
+  // Server notification context menu state
+  const [serverContextMenu, setServerContextMenu] = useState(null); // { x, y }
 
   const toggleCategory = (id) => {
     setCollapsedCategories(prev => ({ ...prev, [id]: !prev[id] }));
@@ -87,6 +103,19 @@ export default function Sidebar({ isHome }) {
     }
 
     handleDragEnd();
+  };
+
+  // Close context menus on outside click
+  useEffect(() => {
+    if (!serverContextMenu) return;
+    const handler = () => setServerContextMenu(null);
+    document.addEventListener('click', handler);
+    return () => document.removeEventListener('click', handler);
+  }, [serverContextMenu]);
+
+  const handleServerHeaderContextMenu = (e) => {
+    e.preventDefault();
+    setServerContextMenu({ x: e.clientX, y: e.clientY });
   };
 
   const userPanel = (
@@ -213,12 +242,26 @@ export default function Sidebar({ isHome }) {
 
   return (
     <div className="sidebar">
-      <div className="sidebar-header" onClick={toggleServerSettings}>
-        <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+      <div
+        className="sidebar-header"
+        onClick={toggleServerSettings}
+        onContextMenu={handleServerHeaderContextMenu}
+      >
+        <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 6 }}>
           {currentServer?.name || 'Server'}
+          <ServerMuteIndicator serverId={currentServer?.id} />
         </span>
         <span style={{ fontSize: 12, opacity: 0.5 }}>▼</span>
       </div>
+
+      {serverContextMenu && currentServer && (
+        <ServerContextMenu
+          serverId={currentServer.id}
+          x={serverContextMenu.x}
+          y={serverContextMenu.y}
+          onClose={() => setServerContextMenu(null)}
+        />
+      )}
 
       <SidebarEventsIndicator />
 
@@ -292,6 +335,160 @@ function handleVoiceClick(channel) {
   }
 }
 
+// Small mute indicator next to server name
+function ServerMuteIndicator({ serverId }) {
+  const isServerMuted = useStore(s => s.isServerMuted);
+  if (!serverId || !isServerMuted(serverId)) return null;
+  return (
+    <span style={{ color: 'var(--text-muted)', display: 'inline-flex', alignItems: 'center' }} title="Server muted">
+      <BellSlashIcon size={14} />
+    </span>
+  );
+}
+
+// Server right-click context menu with notification settings
+function ServerContextMenu({ serverId, x, y, onClose }) {
+  const notificationSettings = useStore(s => s.notificationSettings);
+  const updateNotificationSetting = useStore(s => s.updateNotificationSetting);
+  const resetNotificationSetting = useStore(s => s.resetNotificationSetting);
+  const isServerMuted = useStore(s => s.isServerMuted);
+  const [showNotifSettings, setShowNotifSettings] = useState(false);
+
+  const serverSetting = notificationSettings[`server:${serverId}`] || {};
+  const muted = isServerMuted(serverId);
+
+  const handleToggleMute = async (e) => {
+    e.stopPropagation();
+    await updateNotificationSetting('server', serverId, { muted: !muted });
+    onClose();
+  };
+
+  const handleNotifyLevel = async (level) => {
+    await updateNotificationSetting('server', serverId, { notify_level: level });
+    setShowNotifSettings(false);
+    onClose();
+  };
+
+  const handleToggleSuppressEveryone = async () => {
+    await updateNotificationSetting('server', serverId, {
+      suppress_everyone: serverSetting.suppress_everyone ? 0 : 1,
+    });
+  };
+
+  const handleToggleSuppressRoles = async () => {
+    await updateNotificationSetting('server', serverId, {
+      suppress_roles: serverSetting.suppress_roles ? 0 : 1,
+    });
+  };
+
+  // Position the menu below cursor, adjusting if near edges
+  const menuStyle = {
+    position: 'fixed',
+    top: y,
+    left: x,
+    zIndex: 10000,
+    background: 'var(--bg-floating)',
+    borderRadius: 4,
+    padding: '6px 0',
+    minWidth: 200,
+    boxShadow: '0 8px 16px rgba(0,0,0,0.24)',
+    border: '1px solid var(--bg-tertiary)',
+  };
+
+  const itemStyle = {
+    padding: '8px 12px',
+    fontSize: 13,
+    color: 'var(--text-normal)',
+    cursor: 'pointer',
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
+  };
+
+  return (
+    <div style={menuStyle} onClick={e => e.stopPropagation()}>
+      <div
+        style={itemStyle}
+        onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-modifier-hover)'}
+        onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+        onClick={handleToggleMute}
+      >
+        <BellSlashIcon size={16} />
+        <span>{muted ? 'Unmute Server' : 'Mute Server'}</span>
+      </div>
+
+      <div style={{ height: 1, background: 'var(--bg-modifier-accent)', margin: '4px 0' }} />
+
+      <div
+        style={itemStyle}
+        onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-modifier-hover)'}
+        onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+        onClick={(e) => { e.stopPropagation(); setShowNotifSettings(!showNotifSettings); }}
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M12 22c1.1 0 2-.9 2-2h-4c0 1.1.9 2 2 2zm6-6v-5c0-3.07-1.64-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.64 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2z" />
+        </svg>
+        <span>Notification Settings</span>
+        <span style={{ marginLeft: 'auto', fontSize: 10, opacity: 0.5 }}>{showNotifSettings ? '▲' : '▼'}</span>
+      </div>
+
+      {showNotifSettings && (
+        <div style={{ padding: '4px 12px 8px' }}>
+          <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: 6 }}>
+            Notify Level
+          </div>
+          {[
+            { value: 'all', label: 'All Messages' },
+            { value: 'mentions', label: 'Only @mentions' },
+            { value: 'nothing', label: 'Nothing' },
+            { value: 'default', label: 'Default' },
+          ].map(opt => (
+            <div
+              key={opt.value}
+              style={{
+                padding: '6px 8px', fontSize: 12, borderRadius: 3, cursor: 'pointer',
+                color: (serverSetting.notify_level || 'default') === opt.value ? 'white' : 'var(--text-normal)',
+                background: (serverSetting.notify_level || 'default') === opt.value ? 'var(--brand-500)' : 'transparent',
+              }}
+              onMouseEnter={e => {
+                if ((serverSetting.notify_level || 'default') !== opt.value) e.currentTarget.style.background = 'var(--bg-modifier-hover)';
+              }}
+              onMouseLeave={e => {
+                if ((serverSetting.notify_level || 'default') !== opt.value) e.currentTarget.style.background = 'transparent';
+              }}
+              onClick={() => handleNotifyLevel(opt.value)}
+            >
+              {opt.label}
+            </div>
+          ))}
+
+          <div style={{ height: 1, background: 'var(--bg-modifier-accent)', margin: '8px 0' }} />
+
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0', fontSize: 12, color: 'var(--text-normal)', cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={!!serverSetting.suppress_everyone}
+              onChange={handleToggleSuppressEveryone}
+              style={{ accentColor: 'var(--brand-500)' }}
+            />
+            Suppress @everyone and @here
+          </label>
+
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '4px 0', fontSize: 12, color: 'var(--text-normal)', cursor: 'pointer' }}>
+            <input
+              type="checkbox"
+              checked={!!serverSetting.suppress_roles}
+              onChange={handleToggleSuppressRoles}
+              style={{ accentColor: 'var(--brand-500)' }}
+            />
+            Suppress all role @mentions
+          </label>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ChannelItem({ channel, active, onClick, isDragging, dropTarget, onDragStart, onDragOver, onDragEnd, onDrop }) {
   const voiceChannel = useStore(s => s.voiceChannel);
   const voiceParticipants = useStore(s => s.voiceParticipants);
@@ -299,26 +496,45 @@ function ChannelItem({ channel, active, onClick, isDragging, dropTarget, onDragS
   const openChannelSettings = useStore(s => s.openChannelSettings);
   const currentServer = useStore(s => s.currentServer);
   const user = useStore(s => s.user);
+  const isChannelMuted = useStore(s => s.isChannelMuted);
   const isVoiceActive = channel.type === 'voice' && voiceChannel?.id === channel.id;
   const hasUnread = unread && unread.count > 0;
+  const muted = isChannelMuted(channel.id);
+
+  // Channel notification context menu
+  const [contextMenu, setContextMenu] = useState(null);
 
   // Check if user is owner or has MANAGE_CHANNELS/MANAGE_ROLES
   const isOwner = currentServer?.owner_id === user?.id;
   const userPerms = BigInt(user?.permissions || '0');
   const canManage = isOwner || hasPermission(userPerms, PERMISSIONS.MANAGE_CHANNELS) || hasPermission(userPerms, PERMISSIONS.MANAGE_ROLES);
 
+  useEffect(() => {
+    if (!contextMenu) return;
+    const handler = () => setContextMenu(null);
+    document.addEventListener('click', handler);
+    return () => document.removeEventListener('click', handler);
+  }, [contextMenu]);
+
+  const handleContextMenu = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setContextMenu({ x: e.clientX, y: e.clientY });
+  };
+
   return (
     <>
       <div
         className={`channel-item ${active ? 'active' : ''} ${hasUnread ? 'unread' : ''} ${isDragging ? 'dragging' : ''}`}
         onClick={onClick}
+        onContextMenu={handleContextMenu}
         draggable
         onDragStart={onDragStart}
         onDragOver={onDragOver}
         onDragEnd={onDragEnd}
         onDrop={onDrop}
         style={{
-          opacity: isDragging ? 0.4 : 1,
+          opacity: isDragging ? 0.4 : muted ? 0.4 : 1,
           borderTop: dropTarget === 'above' ? '2px solid var(--brand-500)' : undefined,
           borderBottom: dropTarget === 'below' ? '2px solid var(--brand-500)' : undefined,
         }}
@@ -331,6 +547,11 @@ function ChannelItem({ channel, active, onClick, isDragging, dropTarget, onDragS
           )}
         </span>
         <span className="channel-name">{channel.name}</span>
+        {muted && (
+          <span style={{ color: 'var(--text-muted)', display: 'inline-flex', alignItems: 'center', flexShrink: 0, marginLeft: 4 }} title="Muted">
+            <BellSlashIcon size={12} />
+          </span>
+        )}
         {unread?.mentions > 0 && (
           <span style={{
             background: '#ED4245', color: 'white', borderRadius: 8,
@@ -365,6 +586,14 @@ function ChannelItem({ channel, active, onClick, isDragging, dropTarget, onDragS
           </span>
         )}
       </div>
+      {contextMenu && channel.server_id && (
+        <ChannelContextMenu
+          channelId={channel.id}
+          x={contextMenu.x}
+          y={contextMenu.y}
+          onClose={() => setContextMenu(null)}
+        />
+      )}
       {isVoiceActive && voiceParticipants.length > 0 && (
         <div className="voice-users">
           {voiceParticipants.map(p => (
@@ -380,6 +609,110 @@ function ChannelItem({ channel, active, onClick, isDragging, dropTarget, onDragS
         </div>
       )}
     </>
+  );
+}
+
+// Channel right-click context menu with notification options
+function ChannelContextMenu({ channelId, x, y, onClose }) {
+  const notificationSettings = useStore(s => s.notificationSettings);
+  const updateNotificationSetting = useStore(s => s.updateNotificationSetting);
+  const isChannelMuted = useStore(s => s.isChannelMuted);
+  const [showNotifLevel, setShowNotifLevel] = useState(false);
+
+  const channelSetting = notificationSettings[`channel:${channelId}`] || {};
+  const muted = isChannelMuted(channelId);
+
+  const handleToggleMute = async (e) => {
+    e.stopPropagation();
+    await updateNotificationSetting('channel', channelId, { muted: !muted });
+    onClose();
+  };
+
+  const handleNotifyLevel = async (level) => {
+    await updateNotificationSetting('channel', channelId, { notify_level: level });
+    setShowNotifLevel(false);
+    onClose();
+  };
+
+  const menuStyle = {
+    position: 'fixed',
+    top: y,
+    left: x,
+    zIndex: 10000,
+    background: 'var(--bg-floating)',
+    borderRadius: 4,
+    padding: '6px 0',
+    minWidth: 180,
+    boxShadow: '0 8px 16px rgba(0,0,0,0.24)',
+    border: '1px solid var(--bg-tertiary)',
+  };
+
+  const itemStyle = {
+    padding: '8px 12px',
+    fontSize: 13,
+    color: 'var(--text-normal)',
+    cursor: 'pointer',
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
+  };
+
+  return (
+    <div style={menuStyle} onClick={e => e.stopPropagation()}>
+      <div
+        style={itemStyle}
+        onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-modifier-hover)'}
+        onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+        onClick={handleToggleMute}
+      >
+        <BellSlashIcon size={16} />
+        <span>{muted ? 'Unmute Channel' : 'Mute Channel'}</span>
+      </div>
+
+      <div style={{ height: 1, background: 'var(--bg-modifier-accent)', margin: '4px 0' }} />
+
+      <div
+        style={itemStyle}
+        onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-modifier-hover)'}
+        onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+        onClick={(e) => { e.stopPropagation(); setShowNotifLevel(!showNotifLevel); }}
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M12 22c1.1 0 2-.9 2-2h-4c0 1.1.9 2 2 2zm6-6v-5c0-3.07-1.64-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.64 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2z" />
+        </svg>
+        <span>Notification Override</span>
+        <span style={{ marginLeft: 'auto', fontSize: 10, opacity: 0.5 }}>{showNotifLevel ? '▲' : '▼'}</span>
+      </div>
+
+      {showNotifLevel && (
+        <div style={{ padding: '4px 12px 8px' }}>
+          {[
+            { value: 'default', label: 'Use Server Default' },
+            { value: 'all', label: 'All Messages' },
+            { value: 'mentions', label: 'Only @mentions' },
+            { value: 'nothing', label: 'Nothing' },
+          ].map(opt => (
+            <div
+              key={opt.value}
+              style={{
+                padding: '6px 8px', fontSize: 12, borderRadius: 3, cursor: 'pointer',
+                color: (channelSetting.notify_level || 'default') === opt.value ? 'white' : 'var(--text-normal)',
+                background: (channelSetting.notify_level || 'default') === opt.value ? 'var(--brand-500)' : 'transparent',
+              }}
+              onMouseEnter={e => {
+                if ((channelSetting.notify_level || 'default') !== opt.value) e.currentTarget.style.background = 'var(--bg-modifier-hover)';
+              }}
+              onMouseLeave={e => {
+                if ((channelSetting.notify_level || 'default') !== opt.value) e.currentTarget.style.background = 'transparent';
+              }}
+              onClick={() => handleNotifyLevel(opt.value)}
+            >
+              {opt.label}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 

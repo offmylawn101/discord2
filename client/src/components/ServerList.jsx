@@ -3,9 +3,9 @@ import { useNavigate } from 'react-router-dom';
 import { useStore } from '../store';
 
 export default function ServerList() {
-  const { servers, currentServer, selectServer, toggleCreateServer, unreadServers } = useStore();
+  const { servers, currentServer, selectServer, toggleCreateServer, toggleDiscover, showDiscover, unreadServers } = useStore();
   const navigate = useNavigate();
-  const isHome = !currentServer;
+  const isHome = !currentServer && !showDiscover;
 
   return (
     <div className="server-list">
@@ -15,7 +15,7 @@ export default function ServerList() {
         <div
           className={`server-icon home ${isHome ? 'active' : ''}`}
           onClick={() => {
-            useStore.setState({ currentServer: null, currentChannel: null, currentDm: null });
+            useStore.setState({ currentServer: null, currentChannel: null, currentDm: null, showDiscover: false });
             navigate('/channels/@me');
           }}
           title="Direct Messages"
@@ -39,6 +39,7 @@ export default function ServerList() {
             <div
               className={`server-icon ${isActive ? 'active' : ''}`}
               onClick={() => {
+                useStore.setState({ showDiscover: false });
                 selectServer(server.id);
                 navigate(`/channels/${server.id}`);
               }}
@@ -70,6 +71,21 @@ export default function ServerList() {
         >
           <svg width="24" height="24" viewBox="0 0 24 24">
             <path fill="currentColor" d="M20 11.1111H12.8889V4H11.1111V11.1111H4V12.8889H11.1111V20H12.8889V12.8889H20V11.1111Z" />
+          </svg>
+        </div>
+      </div>
+
+      {/* Explore / Discover servers */}
+      <div className="server-icon-wrapper">
+        <div
+          className={`server-icon add ${showDiscover ? 'active' : ''}`}
+          onClick={toggleDiscover}
+          title="Explore Public Servers"
+          style={showDiscover ? { background: 'var(--green-360)', color: 'white', borderRadius: 16 } : {}}
+        >
+          <svg width="24" height="24" viewBox="0 0 24 24">
+            <path fill="currentColor" d="M12 2C6.486 2 2 6.486 2 12s4.486 10 10 10 10-4.486 10-10S17.514 2 12 2zm0 18c-4.411 0-8-3.589-8-8s3.589-8 8-8 8 3.589 8 8-3.589 8-8 8z" />
+            <path fill="currentColor" d="M14.829 9.172l-4.656 1.999-1.999 4.657 4.656-1.999 1.999-4.657zm-2.829 4.243c-.781 0-1.414-.633-1.414-1.414 0-.782.633-1.415 1.414-1.415.782 0 1.415.633 1.415 1.415 0 .781-.633 1.414-1.415 1.414z" />
           </svg>
         </div>
       </div>

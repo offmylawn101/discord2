@@ -21,6 +21,7 @@ export const PERMISSIONS = {
   DEAFEN_MEMBERS:         1n << 23n,
   MOVE_MEMBERS:           1n << 24n,
   VIEW_AUDIT_LOG:         1n << 7n,
+  MANAGE_WEBHOOKS:        1n << 29n,
 };
 
 export function hasPermission(perms, perm) {

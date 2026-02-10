@@ -148,6 +148,7 @@ async function initialize() {
         banner TEXT DEFAULT NULL,
         owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
         description TEXT DEFAULT '',
+        is_public INTEGER DEFAULT 0,
         system_channel_id TEXT DEFAULT NULL,
         default_role_id TEXT DEFAULT NULL,
         created_at TIMESTAMP DEFAULT NOW(),
@@ -359,6 +360,10 @@ async function initialize() {
       CREATE INDEX IF NOT EXISTS idx_messages_reply ON messages(reply_to_id);
       CREATE INDEX IF NOT EXISTS idx_server_members_server ON server_members(server_id);
 
+      -- Add is_public column if not exists (migration for existing DBs)
+      ALTER TABLE servers ADD COLUMN IF NOT EXISTS is_public INTEGER DEFAULT 0;
+      CREATE INDEX IF NOT EXISTS idx_servers_public ON servers(is_public);
+
       -- Full-text search index
       ALTER TABLE messages ADD COLUMN IF NOT EXISTS search_vector tsvector;
       CREATE INDEX IF NOT EXISTS idx_messages_search ON messages USING GIN(search_vector);
@@ -414,6 +419,34 @@ async function initialize() {
       );
       CREATE INDEX IF NOT EXISTS idx_automod_rules_server ON automod_rules(server_id);
 
+      CREATE TABLE IF NOT EXISTS webhooks (
+        id TEXT PRIMARY KEY,
+        channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+        server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+        name TEXT NOT NULL DEFAULT 'Captain Hook',
+        avatar TEXT DEFAULT NULL,
+        token TEXT NOT NULL,
+        created_by TEXT NOT NULL REFERENCES users(id),
+        created_at TIMESTAMP DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_webhooks_channel ON webhooks(channel_id);
+      CREATE INDEX IF NOT EXISTS idx_webhooks_server ON webhooks(server_id);
+
+      CREATE TABLE IF NOT EXISTS notification_settings (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        target_type TEXT NOT NULL CHECK(target_type IN ('server', 'channel')),
+        target_id TEXT NOT NULL,
+        muted INTEGER DEFAULT 0,
+        mute_until TIMESTAMP DEFAULT NULL,
+        suppress_everyone INTEGER DEFAULT 0,
+        suppress_roles INTEGER DEFAULT 0,
+        notify_level TEXT DEFAULT 'default' CHECK(notify_level IN ('all', 'mentions', 'nothing', 'default')),
+        created_at TIMESTAMP DEFAULT NOW(),
+        UNIQUE(user_id, target_type, target_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_notification_settings_user ON notification_settings(user_id);
+
       -- Trigger to auto-update search vector
       CREATE OR REPLACE FUNCTION messages_search_update() RETURNS trigger AS $$
       BEGIN
@@ -449,6 +482,7 @@ async function initialize() {
       CREATE TABLE IF NOT EXISTS servers (
         id TEXT PRIMARY KEY, name TEXT NOT NULL, icon TEXT DEFAULT NULL, banner TEXT DEFAULT NULL,
         owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE, description TEXT DEFAULT '',
+        is_public INTEGER DEFAULT 0,
         system_channel_id TEXT DEFAULT NULL, default_role_id TEXT DEFAULT NULL,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
       );
@@ -618,6 +652,32 @@ async function initialize() {
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       );
       CREATE INDEX IF NOT EXISTS idx_automod_rules_server ON automod_rules(server_id);
+      CREATE TABLE IF NOT EXISTS webhooks (
+        id TEXT PRIMARY KEY,
+        channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+        server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+        name TEXT NOT NULL DEFAULT 'Captain Hook',
+        avatar TEXT DEFAULT NULL,
+        token TEXT NOT NULL,
+        created_by TEXT NOT NULL REFERENCES users(id),
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE INDEX IF NOT EXISTS idx_webhooks_channel ON webhooks(channel_id);
+      CREATE INDEX IF NOT EXISTS idx_webhooks_server ON webhooks(server_id);
+      CREATE TABLE IF NOT EXISTS notification_settings (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        target_type TEXT NOT NULL CHECK(target_type IN ('server', 'channel')),
+        target_id TEXT NOT NULL,
+        muted INTEGER DEFAULT 0,
+        mute_until DATETIME DEFAULT NULL,
+        suppress_everyone INTEGER DEFAULT 0,
+        suppress_roles INTEGER DEFAULT 0,
+        notify_level TEXT DEFAULT 'default' CHECK(notify_level IN ('all', 'mentions', 'nothing', 'default')),
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(user_id, target_type, target_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_notification_settings_user ON notification_settings(user_id);
       CREATE INDEX IF NOT EXISTS idx_messages_channel ON messages(channel_id, created_at);
       CREATE INDEX IF NOT EXISTS idx_messages_author ON messages(author_id);
       CREATE INDEX IF NOT EXISTS idx_server_members_user ON server_members(user_id);
@@ -644,6 +704,13 @@ async function initialize() {
       `);
     } catch (e) {
       // Table may already exist
+    }
+
+    // Add is_public column if not exists (migration for existing DBs)
+    try {
+      sqlite.exec(`ALTER TABLE servers ADD COLUMN is_public INTEGER DEFAULT 0`);
+    } catch (e) {
+      // Column may already exist
     }
 
     // Triggers to keep FTS in sync (use try/catch since CREATE TRIGGER IF NOT EXISTS not supported in older SQLite)

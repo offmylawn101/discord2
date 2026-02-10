@@ -18,10 +18,16 @@ export default function ServerSettings() {
   const [selectedRole, setSelectedRole] = useState(null);
   const [rolePerms, setRolePerms] = useState({});
   const [uploadingIcon, setUploadingIcon] = useState(false);
+  const [isPublic, setIsPublic] = useState(!!currentServer?.is_public);
+  const [serverDescription, setServerDescription] = useState(currentServer?.description || '');
   const iconInputRef = useRef(null);
 
   const handleUpdateServer = async () => {
-    await api.patch(`/servers/${currentServer.id}`, { name: serverName });
+    await api.patch(`/servers/${currentServer.id}`, {
+      name: serverName,
+      is_public: isPublic,
+      description: serverDescription,
+    });
     selectServer(currentServer.id);
   };
 
@@ -71,6 +77,7 @@ export default function ServerSettings() {
     ['MANAGE_CHANNELS', 'Manage Channels'],
     ['MANAGE_ROLES', 'Manage Roles'],
     ['MANAGE_MESSAGES', 'Manage Messages'],
+    ['MANAGE_WEBHOOKS', 'Manage Webhooks'],
     ['KICK_MEMBERS', 'Kick Members'],
     ['BAN_MEMBERS', 'Ban Members'],
     ['CREATE_INVITE', 'Create Invite'],
@@ -100,6 +107,7 @@ export default function ServerSettings() {
           <button className={`settings-nav-item ${tab === 'members' ? 'active' : ''}`} onClick={() => setTab('members')}>Members</button>
           <button className={`settings-nav-item ${tab === 'invites' ? 'active' : ''}`} onClick={() => setTab('invites')}>Invites</button>
           <button className={`settings-nav-item ${tab === 'bans' ? 'active' : ''}`} onClick={() => setTab('bans')}>Bans</button>
+          <button className={`settings-nav-item ${tab === 'webhooks' ? 'active' : ''}`} onClick={() => setTab('webhooks')}>Webhooks</button>
           <button className={`settings-nav-item ${tab === 'events' ? 'active' : ''}`} onClick={() => setTab('events')}>Events</button>
           <button className={`settings-nav-item ${tab === 'automod' ? 'active' : ''}`} onClick={() => setTab('automod')}>AutoMod</button>
           <button className={`settings-nav-item ${tab === 'audit' ? 'active' : ''}`} onClick={() => setTab('audit')}>Audit Log</button>
@@ -145,6 +153,73 @@ export default function ServerSettings() {
                 </div>
               </div>
             </div>
+            {/* Server Description */}
+            <div className="form-group" style={{ marginBottom: 24 }}>
+              <label className="form-label">Server Description</label>
+              <textarea
+                className="form-input"
+                value={serverDescription}
+                onChange={e => setServerDescription(e.target.value)}
+                placeholder="Tell people about your server..."
+                rows={3}
+                maxLength={1024}
+                style={{ resize: 'vertical', minHeight: 60 }}
+              />
+              <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>
+                {serverDescription.length}/1024
+              </div>
+            </div>
+
+            {/* Public Server Toggle */}
+            <div style={{
+              padding: 16, background: 'var(--bg-secondary)', borderRadius: 8,
+              marginBottom: 24,
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                <div>
+                  <div style={{ fontWeight: 600, color: 'var(--header-primary)', fontSize: 15 }}>
+                    Public Server
+                  </div>
+                  <div style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 2 }}>
+                    Make this server visible in Server Discovery so anyone can find and join it.
+                  </div>
+                </div>
+                <label style={{
+                  position: 'relative', display: 'inline-block',
+                  width: 44, height: 24, flexShrink: 0, marginLeft: 16,
+                }}>
+                  <input
+                    type="checkbox"
+                    checked={isPublic}
+                    onChange={e => setIsPublic(e.target.checked)}
+                    style={{ opacity: 0, width: 0, height: 0 }}
+                  />
+                  <span style={{
+                    position: 'absolute', cursor: 'pointer',
+                    top: 0, left: 0, right: 0, bottom: 0,
+                    background: isPublic ? 'var(--green-360)' : 'var(--bg-tertiary)',
+                    borderRadius: 12, transition: 'background 0.2s',
+                  }}>
+                    <span style={{
+                      position: 'absolute', height: 18, width: 18,
+                      left: isPublic ? 22 : 3, bottom: 3,
+                      background: 'white', borderRadius: '50%',
+                      transition: 'left 0.2s',
+                    }} />
+                  </span>
+                </label>
+              </div>
+              {isPublic && (
+                <div style={{
+                  fontSize: 12, color: 'var(--yellow-300)', marginTop: 8,
+                  padding: '8px 12px', background: 'rgba(250, 168, 26, 0.1)',
+                  borderRadius: 4,
+                }}>
+                  Your server will be visible to everyone in Server Discovery. Make sure to set a good description and follow the community guidelines.
+                </div>
+              )}
+            </div>
+
             <button className="btn btn-primary" onClick={handleUpdateServer}>Save Changes</button>
           </>
         )}
@@ -284,6 +359,7 @@ export default function ServerSettings() {
         {tab === 'members' && <ServerMembers />}
         {tab === 'invites' && <ServerInvites />}
         {tab === 'bans' && <ServerBans />}
+        {tab === 'webhooks' && <ServerWebhooks />}
         {tab === 'events' && <ServerEventsManager />}
         {tab === 'automod' && <ServerAutoMod />}
         {tab === 'audit' && <ServerAuditLog />}
@@ -1723,6 +1799,304 @@ function ServerEventsManager() {
                 >
                   Delete
                 </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
+
+function ServerWebhooks() {
+  const { currentServer, channels, webhooks, fetchWebhooks, createWebhook, updateWebhook, deleteWebhook } = useStore();
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [showCreate, setShowCreate] = useState(false);
+  const [newName, setNewName] = useState('');
+  const [newChannelId, setNewChannelId] = useState('');
+  const [editingWebhook, setEditingWebhook] = useState(null);
+  const [editName, setEditName] = useState('');
+  const [copiedId, setCopiedId] = useState(null);
+  const [confirmDelete, setConfirmDelete] = useState(null);
+
+  const textChannels = channels.filter(c => c.type === 'text' || c.type === 'announcement');
+
+  React.useEffect(() => {
+    setLoading(true);
+    fetchWebhooks(currentServer.id).finally(() => setLoading(false));
+  }, [currentServer.id]);
+
+  const handleCreate = async () => {
+    if (!newChannelId) {
+      setError('Please select a channel');
+      return;
+    }
+    setError('');
+    try {
+      await createWebhook(newChannelId, newName.trim() || undefined);
+      setNewName('');
+      setNewChannelId('');
+      setShowCreate(false);
+    } catch (err) {
+      setError(err.message || 'Failed to create webhook');
+    }
+  };
+
+  const handleUpdate = async (webhookId) => {
+    if (!editName.trim()) {
+      setError('Name cannot be empty');
+      return;
+    }
+    setError('');
+    try {
+      await updateWebhook(webhookId, { name: editName.trim() });
+      setEditingWebhook(null);
+      setEditName('');
+    } catch (err) {
+      setError(err.message || 'Failed to update webhook');
+    }
+  };
+
+  const handleDeleteWebhook = async (webhookId) => {
+    setError('');
+    try {
+      await deleteWebhook(webhookId);
+      setConfirmDelete(null);
+    } catch (err) {
+      setError(err.message || 'Failed to delete webhook');
+    }
+  };
+
+  const copyToClipboard = (webhook) => {
+    const url = webhook.url || `${window.location.origin}/api/webhooks/${webhook.id}/${webhook.token}`;
+    navigator.clipboard.writeText(url).then(() => {
+      setCopiedId(webhook.id);
+      setTimeout(() => setCopiedId(null), 2000);
+    });
+  };
+
+  const formatDate = (d) => {
+    const date = new Date(d);
+    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  };
+
+  return (
+    <>
+      <div className="settings-title">Webhooks</div>
+      <p style={{ color: 'var(--text-muted)', fontSize: 14, marginBottom: 16 }}>
+        Webhooks allow external services to send messages to your server channels.
+      </p>
+
+      {error && (
+        <div style={{ padding: '8px 12px', background: 'rgba(237, 66, 69, 0.15)', color: '#ED4245', borderRadius: 4, marginBottom: 12, fontSize: 13 }}>
+          {error}
+        </div>
+      )}
+
+      {!showCreate && (
+        <button
+          className="btn btn-primary"
+          onClick={() => { setShowCreate(true); setError(''); }}
+          style={{ marginBottom: 20 }}
+        >
+          Create Webhook
+        </button>
+      )}
+
+      {showCreate && (
+        <div style={{ marginBottom: 24, padding: 16, background: 'var(--bg-secondary)', borderRadius: 8 }}>
+          <h4 style={{ color: 'var(--header-secondary)', marginBottom: 12, fontSize: 14 }}>
+            Create Webhook
+          </h4>
+
+          <div className="form-group">
+            <label className="form-label">Channel *</label>
+            <select
+              className="form-input"
+              value={newChannelId}
+              onChange={e => setNewChannelId(e.target.value)}
+              style={{ cursor: 'pointer' }}
+            >
+              <option value="">Select a channel...</option>
+              {textChannels.map(ch => (
+                <option key={ch.id} value={ch.id}>#{ch.name}</option>
+              ))}
+            </select>
+          </div>
+
+          <div className="form-group">
+            <label className="form-label">Name</label>
+            <input
+              className="form-input"
+              value={newName}
+              onChange={e => setNewName(e.target.value)}
+              placeholder="Captain Hook"
+              maxLength={80}
+            />
+          </div>
+
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button className="btn btn-primary" onClick={handleCreate}>
+              Create
+            </button>
+            <button
+              className="btn"
+              onClick={() => { setShowCreate(false); setNewName(''); setNewChannelId(''); setError(''); }}
+              style={{ background: 'var(--bg-tertiary)', color: 'var(--text-normal)' }}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      <h4 style={{ color: 'var(--header-secondary)', marginBottom: 8, fontSize: 14 }}>
+        All Webhooks ({webhooks.length})
+      </h4>
+
+      {loading ? (
+        <div style={{ color: 'var(--text-muted)' }}>Loading webhooks...</div>
+      ) : webhooks.length === 0 ? (
+        <div style={{ color: 'var(--text-muted)', padding: 16, textAlign: 'center' }}>
+          No webhooks yet. Create one to get started.
+        </div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          {webhooks.map(webhook => (
+            <div key={webhook.id} style={{
+              padding: '12px 16px', background: 'var(--bg-secondary)', borderRadius: 8,
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+                <div style={{
+                  width: 36, height: 36, borderRadius: '50%', flexShrink: 0,
+                  background: '#5865F2', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontSize: 16, fontWeight: 600, color: 'white',
+                }}>
+                  {webhook.avatar ? (
+                    <img src={webhook.avatar} alt="" style={{ width: 36, height: 36, borderRadius: '50%' }} />
+                  ) : (
+                    webhook.name?.[0]?.toUpperCase() || 'W'
+                  )}
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  {editingWebhook === webhook.id ? (
+                    <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                      <input
+                        className="form-input"
+                        value={editName}
+                        onChange={e => setEditName(e.target.value)}
+                        onKeyDown={e => {
+                          if (e.key === 'Enter') handleUpdate(webhook.id);
+                          if (e.key === 'Escape') { setEditingWebhook(null); setEditName(''); }
+                        }}
+                        style={{ padding: '2px 6px', fontSize: 13, height: 28, flex: 1 }}
+                        autoFocus
+                        maxLength={80}
+                      />
+                      <button
+                        className="btn btn-primary"
+                        onClick={() => handleUpdate(webhook.id)}
+                        style={{ padding: '2px 8px', fontSize: 12, height: 28 }}
+                      >
+                        Save
+                      </button>
+                      <button
+                        className="btn"
+                        onClick={() => { setEditingWebhook(null); setEditName(''); }}
+                        style={{ padding: '2px 8px', fontSize: 12, height: 28, background: 'var(--bg-tertiary)', color: 'var(--text-normal)' }}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  ) : (
+                    <>
+                      <div style={{ fontWeight: 600, color: 'var(--header-primary)', fontSize: 15 }}>
+                        {webhook.name}
+                      </div>
+                      <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                        #{webhook.channel_name} &middot; Created by {webhook.creator_username} &middot; {formatDate(webhook.created_at)}
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
+
+              {/* Webhook URL */}
+              <div style={{
+                display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8,
+                padding: '6px 10px', background: 'var(--bg-tertiary)', borderRadius: 4,
+              }}>
+                <code style={{
+                  flex: 1, fontSize: 12, color: 'var(--text-muted)',
+                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                  fontFamily: 'monospace',
+                }}>
+                  {webhook.url || `${window.location.origin}/api/webhooks/${webhook.id}/${webhook.token}`}
+                </code>
+                <button
+                  onClick={() => copyToClipboard(webhook)}
+                  style={{
+                    background: copiedId === webhook.id ? '#57F287' : 'var(--bg-modifier-active)',
+                    border: 'none', borderRadius: 4, padding: '4px 10px',
+                    cursor: 'pointer', color: copiedId === webhook.id ? '#fff' : 'var(--text-normal)',
+                    fontSize: 12, fontWeight: 600, flexShrink: 0, transition: 'all 0.15s',
+                  }}
+                >
+                  {copiedId === webhook.id ? 'Copied!' : 'Copy URL'}
+                </button>
+              </div>
+
+              {/* Actions */}
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                <button
+                  onClick={() => { setEditingWebhook(webhook.id); setEditName(webhook.name); }}
+                  style={{
+                    background: 'transparent', border: 'none', color: 'var(--text-link)',
+                    cursor: 'pointer', fontSize: 13, padding: '4px 8px', borderRadius: 4,
+                  }}
+                  onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-modifier-hover)'}
+                  onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                >
+                  Edit
+                </button>
+                {confirmDelete === webhook.id ? (
+                  <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                    <span style={{ fontSize: 12, color: '#ED4245', marginRight: 4 }}>Delete this webhook?</span>
+                    <button
+                      onClick={() => handleDeleteWebhook(webhook.id)}
+                      style={{
+                        background: '#ED4245', border: 'none', borderRadius: 4,
+                        padding: '3px 10px', cursor: 'pointer', color: '#fff',
+                        fontSize: 12, fontWeight: 600,
+                      }}
+                    >
+                      Yes
+                    </button>
+                    <button
+                      onClick={() => setConfirmDelete(null)}
+                      style={{
+                        background: 'var(--bg-tertiary)', border: 'none', borderRadius: 4,
+                        padding: '3px 10px', cursor: 'pointer', color: 'var(--text-normal)',
+                        fontSize: 12,
+                      }}
+                    >
+                      No
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => setConfirmDelete(webhook.id)}
+                    style={{
+                      background: 'transparent', border: 'none', color: '#ED4245',
+                      cursor: 'pointer', fontSize: 13, padding: '4px 8px', borderRadius: 4,
+                    }}
+                    onMouseEnter={e => e.currentTarget.style.background = 'rgba(237,66,69,0.15)'}
+                    onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                  >
+                    Delete
+                  </button>
+                )}
               </div>
             </div>
           ))}

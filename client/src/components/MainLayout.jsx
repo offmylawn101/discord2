@@ -18,6 +18,7 @@ import ThreadPanel from './ThreadPanel';
 import QuickSwitcher from './QuickSwitcher';
 import ChannelSettings from './ChannelSettings';
 import EventsPanel from './EventsPanel';
+import ServerDiscovery from './ServerDiscovery';
 
 export default function MainLayout() {
   const {
@@ -29,6 +30,7 @@ export default function MainLayout() {
   const connectionState = useStore(s => s.connectionState);
   const activeThread = useStore(s => s.activeThread);
   const showEventsPanel = useStore(s => s.showEventsPanel);
+  const showDiscover = useStore(s => s.showDiscover);
   const navigate = useNavigate();
 
   // Track connection state
@@ -124,10 +126,13 @@ export default function MainLayout() {
   const isHome = parts[1] === '@me';
   const routeServerId = !isHome ? parts[1] : null;
 
+  const fetchNotificationSettings = useStore(s => s.fetchNotificationSettings);
+
   useEffect(() => {
     fetchServers();
     fetchDms();
     fetchRelationships();
+    fetchNotificationSettings();
   }, []);
 
   // Request notification permission on mount
@@ -185,22 +190,28 @@ export default function MainLayout() {
     <div className="app">
       {connectionState !== 'connected' && <ConnectionBanner state={connectionState} />}
       <ServerList />
-      <Sidebar isHome={isHome} />
-      {isHome && !currentChannel ? (
-        <FriendsPage />
-      ) : currentChannel ? (
-        <>
-          <ChatArea />
-          {activeThread && <ThreadPanel />}
-          {showMemberList && !activeThread && <MemberList />}
-        </>
+      {showDiscover ? (
+        <ServerDiscovery />
       ) : (
-        <div className="main-content">
-          <div className="empty-state">
-            <div className="emoji">👋</div>
-            <div>Select a channel to start chatting</div>
-          </div>
-        </div>
+        <>
+          <Sidebar isHome={isHome} />
+          {isHome && !currentChannel ? (
+            <FriendsPage />
+          ) : currentChannel ? (
+            <>
+              <ChatArea />
+              {activeThread && <ThreadPanel />}
+              {showMemberList && !activeThread && <MemberList />}
+            </>
+          ) : (
+            <div className="main-content">
+              <div className="empty-state">
+                <div className="emoji">👋</div>
+                <div>Select a channel to start chatting</div>
+              </div>
+            </div>
+          )}
+        </>
       )}
       {showCreateServer && <CreateServerModal />}
       {showInviteModal && <InviteModal />}

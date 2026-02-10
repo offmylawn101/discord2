@@ -138,6 +138,68 @@ export const useStore = create((set, get) => ({
     }));
   },
 
+  // Discover
+  discoverServers: [],
+  discoverLoading: false,
+  discoverTotal: 0,
+  discoverPage: 1,
+  showDiscover: false,
+  toggleDiscover: () => set(s => ({
+    showDiscover: !s.showDiscover,
+    currentServer: s.showDiscover ? s.currentServer : null,
+    currentChannel: s.showDiscover ? s.currentChannel : null,
+    currentDm: s.showDiscover ? s.currentDm : null,
+  })),
+
+  fetchDiscoverServers: async (params = {}) => {
+    set({ discoverLoading: true });
+    try {
+      const query = new URLSearchParams();
+      if (params.page) query.set('page', params.page);
+      if (params.limit) query.set('limit', params.limit);
+      if (params.q) query.set('q', params.q);
+      if (params.sort) query.set('sort', params.sort);
+      if (params.category) query.set('category', params.category);
+      const qs = query.toString();
+      const result = await api.get(`/discover${qs ? `?${qs}` : ''}`);
+      set({
+        discoverServers: result.servers || [],
+        discoverTotal: result.total || 0,
+        discoverPage: result.page || 1,
+        discoverLoading: false,
+      });
+      return result;
+    } catch (err) {
+      set({ discoverLoading: false });
+      console.error('Fetch discover servers error:', err);
+      return { servers: [], total: 0 };
+    }
+  },
+
+  fetchDiscoverServerDetail: async (serverId) => {
+    try {
+      return await api.get(`/discover/${serverId}`);
+    } catch (err) {
+      console.error('Fetch discover server detail error:', err);
+      return null;
+    }
+  },
+
+  joinDiscoverServer: async (serverId) => {
+    try {
+      // Use the existing join endpoint - we need an invite or direct join
+      // For public servers, we create a special join endpoint
+      const result = await api.post(`/discover/${serverId}/join`);
+      if (result.server) {
+        get().fetchServers();
+      }
+      return result;
+    } catch (err) {
+      console.error('Join discover server error:', err);
+      throw err;
+    }
+  },
+
   // UI
   showSettings: false,
   showServerSettings: false,
@@ -150,6 +212,108 @@ export const useStore = create((set, get) => ({
   desktopNotifications: true,
   soundEnabled: true,
   mentionNotifications: true, // Always notify on mentions even if other notifs disabled
+
+  // Per-server/channel notification settings
+  notificationSettings: {}, // keyed by `${targetType}:${targetId}`
+
+  fetchNotificationSettings: async () => {
+    try {
+      const settings = await api.get('/notifications/settings');
+      const mapped = {};
+      for (const s of settings) {
+        mapped[`${s.target_type}:${s.target_id}`] = s;
+      }
+      set({ notificationSettings: mapped });
+    } catch {
+      // Ignore errors on load
+    }
+  },
+
+  updateNotificationSetting: async (targetType, targetId, settings) => {
+    try {
+      const result = await api.put(`/notifications/settings/${targetType}/${targetId}`, settings);
+      set(s => ({
+        notificationSettings: {
+          ...s.notificationSettings,
+          [`${targetType}:${targetId}`]: result,
+        },
+      }));
+      return result;
+    } catch (err) {
+      console.error('Error updating notification setting:', err);
+      throw err;
+    }
+  },
+
+  resetNotificationSetting: async (targetType, targetId) => {
+    try {
+      await api.delete(`/notifications/settings/${targetType}/${targetId}`);
+      set(s => {
+        const notificationSettings = { ...s.notificationSettings };
+        delete notificationSettings[`${targetType}:${targetId}`];
+        return { notificationSettings };
+      });
+    } catch (err) {
+      console.error('Error resetting notification setting:', err);
+      throw err;
+    }
+  },
+
+  isChannelMuted: (channelId) => {
+    const state = get();
+    // Check channel-level mute
+    const channelSetting = state.notificationSettings[`channel:${channelId}`];
+    if (channelSetting?.muted) {
+      // Check if mute has expired
+      if (channelSetting.mute_until) {
+        if (new Date(channelSetting.mute_until) > new Date()) return true;
+      } else {
+        return true;
+      }
+    }
+    // Check parent server mute
+    const channel = state.channels.find(c => c.id === channelId);
+    if (channel?.server_id) {
+      const serverSetting = state.notificationSettings[`server:${channel.server_id}`];
+      if (serverSetting?.muted) {
+        if (serverSetting.mute_until) {
+          if (new Date(serverSetting.mute_until) > new Date()) return true;
+        } else {
+          return true;
+        }
+      }
+    }
+    return false;
+  },
+
+  isServerMuted: (serverId) => {
+    const state = get();
+    const serverSetting = state.notificationSettings[`server:${serverId}`];
+    if (serverSetting?.muted) {
+      if (serverSetting.mute_until) {
+        return new Date(serverSetting.mute_until) > new Date();
+      }
+      return true;
+    }
+    return false;
+  },
+
+  getNotifyLevel: (channelId, serverId) => {
+    const state = get();
+    // Channel-level overrides server-level
+    const channelSetting = state.notificationSettings[`channel:${channelId}`];
+    if (channelSetting && channelSetting.notify_level !== 'default') {
+      return channelSetting.notify_level;
+    }
+    // Fall back to server-level
+    if (serverId) {
+      const serverSetting = state.notificationSettings[`server:${serverId}`];
+      if (serverSetting && serverSetting.notify_level !== 'default') {
+        return serverSetting.notify_level;
+      }
+    }
+    return 'all'; // Default behavior: notify for all messages
+  },
 
   // Auth actions
   setUser: (user) => set({ user }),
@@ -326,9 +490,33 @@ export const useStore = create((set, get) => ({
       if (message.author_id !== state.user?.id) {
         const isMentioned = message.mentions && message.mentions.includes(state.user?.id);
 
+        // Check per-channel/server notification settings
+        const channelMuted = state.isChannelMuted(message.channel_id);
+        const notifyLevel = state.getNotifyLevel(message.channel_id, message.server_id);
+        const suppressEveryone = (() => {
+          const cs = state.notificationSettings[`channel:${message.channel_id}`];
+          if (cs?.suppress_everyone) return true;
+          if (message.server_id) {
+            const ss = state.notificationSettings[`server:${message.server_id}`];
+            if (ss?.suppress_everyone) return true;
+          }
+          return false;
+        })();
+
+        // Determine if this message should trigger a notification
+        const isEveryoneMention = message.content && (message.content.includes('@everyone') || message.content.includes('@here'));
+        const effectiveMention = isMentioned || (isEveryoneMention && !suppressEveryone);
+
+        let shouldNotify = false;
+        if (!channelMuted) {
+          if (notifyLevel === 'all') shouldNotify = true;
+          else if (notifyLevel === 'mentions') shouldNotify = effectiveMention;
+          else if (notifyLevel === 'nothing') shouldNotify = false;
+        }
+
         // Sound
-        if (state.soundEnabled) {
-          if (isMentioned) {
+        if (state.soundEnabled && shouldNotify) {
+          if (effectiveMention) {
             playMentionSound();
           } else if (state.notificationsEnabled) {
             playMessageSound();
@@ -336,10 +524,10 @@ export const useStore = create((set, get) => ({
         }
 
         // Desktop notification
-        if (state.desktopNotifications && (state.notificationsEnabled || (state.mentionNotifications && isMentioned))) {
+        if (state.desktopNotifications && shouldNotify && (state.notificationsEnabled || (state.mentionNotifications && effectiveMention))) {
           const channelName = message.channel_name || message.channel_id?.slice(0, 8);
           showNotification(
-            isMentioned ? `${message.username} mentioned you` : message.username,
+            effectiveMention ? `${message.username} mentioned you` : message.username,
             {
               body: message.content?.slice(0, 100) || '(attachment)',
               tag: `msg-${message.channel_id}`, // Group by channel
@@ -697,6 +885,39 @@ export const useStore = create((set, get) => ({
       automodRules: s.automodRules.map(r => r.id === ruleId ? rule : r),
     }));
     return rule;
+  },
+
+  // Webhooks
+  webhooks: [],
+
+  fetchWebhooks: async (serverId) => {
+    try {
+      const webhooks = await api.get(`/servers/${serverId}/webhooks`);
+      set({ webhooks: webhooks || [] });
+    } catch {
+      set({ webhooks: [] });
+    }
+  },
+
+  createWebhook: async (channelId, name) => {
+    const webhook = await api.post(`/channels/${channelId}/webhooks`, { name });
+    set(s => ({ webhooks: [...s.webhooks, webhook] }));
+    return webhook;
+  },
+
+  updateWebhook: async (webhookId, data) => {
+    const webhook = await api.patch(`/webhooks/${webhookId}`, data);
+    set(s => ({
+      webhooks: s.webhooks.map(w => w.id === webhookId ? webhook : w),
+    }));
+    return webhook;
+  },
+
+  deleteWebhook: async (webhookId) => {
+    await api.delete(`/webhooks/${webhookId}`);
+    set(s => ({
+      webhooks: s.webhooks.filter(w => w.id !== webhookId),
+    }));
   },
 
   // UI

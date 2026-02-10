@@ -1745,3 +1745,88 @@ kbd { padding: 2px 8px; background: var(--bg-tertiary); border-radius: 4px; font
 .bulk-checkbox {
   pointer-events: none;
 }
+
+/* Formatting Toolbar */
+.formatting-toolbar {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 8px;
+  background: var(--bg-tertiary);
+  border-radius: 4px 4px 0 0;
+  border-bottom: 1px solid var(--bg-modifier-active);
+}
+
+.formatting-toolbar + .message-input-wrapper {
+  border-radius: 0 0 8px 8px;
+}
+
+.formatting-toolbar.no-top-radius {
+  border-radius: 0;
+}
+
+.format-btn {
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: 4px;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  font-family: inherit;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.format-btn:hover {
+  background: var(--bg-modifier-hover);
+  color: var(--text-normal);
+}
+
+.format-btn[data-active] {
+  color: var(--brand-500);
+}
+
+.format-btn .format-bold {
+  font-weight: 800;
+  font-size: 14px;
+}
+
+.format-btn .format-italic {
+  font-style: italic;
+  font-weight: 600;
+  font-size: 14px;
+  font-family: serif;
+}
+
+.format-btn .format-underline {
+  text-decoration: underline;
+  font-weight: 700;
+  font-size: 14px;
+}
+
+.format-btn .format-strike {
+  text-decoration: line-through;
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.format-btn .format-code {
+  font-family: 'Consolas', 'Monaco', monospace;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.format-divider {
+  width: 1px;
+  height: 20px;
+  background: var(--bg-modifier-active);
+  margin: 0 4px;
+  flex-shrink: 0;
+}

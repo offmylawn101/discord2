@@ -185,7 +185,7 @@ router.patch('/:serverId', authenticate, async (req, res) => {
       return res.status(403).json({ error: 'Missing MANAGE_SERVER permission' });
     }
 
-    const { name, icon, banner, description, system_channel_id } = req.body;
+    const { name, icon, banner, description, system_channel_id, is_public } = req.body;
     const updates = [];
     const values = [];
 
@@ -194,6 +194,7 @@ router.patch('/:serverId', authenticate, async (req, res) => {
     if (banner !== undefined) { updates.push('banner = ?'); values.push(banner); }
     if (description !== undefined) { updates.push('description = ?'); values.push(description); }
     if (system_channel_id !== undefined) { updates.push('system_channel_id = ?'); values.push(system_channel_id); }
+    if (is_public !== undefined) { updates.push('is_public = ?'); values.push(is_public ? 1 : 0); }
 
     if (updates.length === 0) return res.status(400).json({ error: 'No fields to update' });
 
@@ -205,7 +206,7 @@ router.patch('/:serverId', authenticate, async (req, res) => {
 
     await logAudit(serverId, req.userId, AUDIT_ACTIONS.SERVER_UPDATE, {
       targetType: 'server', targetId: serverId,
-      changes: { name, description },
+      changes: { name, description, is_public },
     });
 
     const server = await db.get('SELECT * FROM servers WHERE id = ?', [serverId]);
