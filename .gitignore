@@ -7,3 +7,4 @@ dist/
 uploads/
 .DS_Store
 *.log
+logs/

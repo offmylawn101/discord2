@@ -6,7 +6,7 @@ const onlineUsers = new Map();
 const voiceConnections = new Map();
 
 function setupSocketHandlers(io) {
-  io.on('connection', (socket) => {
+  io.on('connection', async (socket) => {
     const userId = socket.userId;
     console.log(`User connected: ${userId} (socket: ${socket.id})`);
 
@@ -17,20 +17,20 @@ function setupSocketHandlers(io) {
     onlineUsers.get(userId).add(socket.id);
 
     // Set user online
-    db.prepare('UPDATE users SET status = ? WHERE id = ? AND status = ?').run('online', userId, 'offline');
+    await db.run('UPDATE users SET status = ? WHERE id = ? AND status = ?', ['online', userId, 'offline']);
 
     // Join user's server rooms and DM rooms
-    const servers = db.prepare('SELECT server_id FROM server_members WHERE user_id = ?').all(userId);
+    const servers = await db.all('SELECT server_id FROM server_members WHERE user_id = ?', [userId]);
     for (const s of servers) {
       socket.join(`server:${s.server_id}`);
     }
-    const dms = db.prepare('SELECT channel_id FROM dm_members WHERE user_id = ?').all(userId);
+    const dms = await db.all('SELECT channel_id FROM dm_members WHERE user_id = ?', [userId]);
     for (const dm of dms) {
       socket.join(`channel:${dm.channel_id}`);
     }
 
     // Broadcast presence update
-    const user = db.prepare('SELECT id, username, discriminator, avatar, status, custom_status FROM users WHERE id = ?').get(userId);
+    const user = await db.get('SELECT id, username, discriminator, avatar, status, custom_status FROM users WHERE id = ?', [userId]);
     for (const s of servers) {
       io.to(`server:${s.server_id}`).emit('presence_update', { userId, status: user.status, custom_status: user.custom_status });
     }
@@ -47,9 +47,9 @@ function setupSocketHandlers(io) {
 
     // --- Message events ---
 
-    socket.on('message_create', (message) => {
+    socket.on('message_create', async (message) => {
       // Look up server_id for the channel
-      const channel = db.prepare('SELECT server_id FROM channels WHERE id = ?').get(message.channel_id);
+      const channel = await db.get('SELECT server_id FROM channels WHERE id = ?', [message.channel_id]);
       const enrichedMessage = { ...message, server_id: channel?.server_id || null };
 
       // Broadcast to channel
@@ -101,7 +101,7 @@ function setupSocketHandlers(io) {
 
     // --- Voice ---
 
-    socket.on('voice_join', ({ channelId, serverId }) => {
+    socket.on('voice_join', async ({ channelId, serverId }) => {
       if (!voiceConnections.has(channelId)) {
         voiceConnections.set(channelId, new Map());
       }
@@ -123,7 +123,7 @@ function setupSocketHandlers(io) {
           if (connections.size === 0) voiceConnections.delete(chId);
 
           // Remove voice state from DB
-          db.prepare('DELETE FROM voice_states WHERE user_id = ? AND channel_id = ?').run(userId, chId);
+          await db.run('DELETE FROM voice_states WHERE user_id = ? AND channel_id = ?', [userId, chId]);
         }
       }
 
@@ -137,10 +137,10 @@ function setupSocketHandlers(io) {
       socket.join(`voice:${channelId}`);
 
       // Store voice state
-      db.prepare(`
+      await db.run(`
         INSERT OR REPLACE INTO voice_states (user_id, channel_id, server_id)
         VALUES (?, ?, ?)
-      `).run(userId, channelId, serverId || null);
+      `, [userId, channelId, serverId || null]);
 
       // Notify others in the voice channel
       io.to(`voice:${channelId}`).emit('voice_state_update', {
@@ -157,7 +157,7 @@ function setupSocketHandlers(io) {
       const participants = [];
       for (const [uid, state] of channelVoice) {
         if (uid !== userId) {
-          const u = db.prepare('SELECT id, username, avatar FROM users WHERE id = ?').get(uid);
+          const u = await db.get('SELECT id, username, avatar FROM users WHERE id = ?', [uid]);
           participants.push({
             userId: uid,
             username: u?.username,
@@ -179,14 +179,14 @@ function setupSocketHandlers(io) {
       }
     });
 
-    socket.on('voice_leave', ({ channelId }) => {
+    socket.on('voice_leave', async ({ channelId }) => {
       const channelVoice = voiceConnections.get(channelId);
       if (!channelVoice) return;
 
       channelVoice.delete(userId);
       socket.leave(`voice:${channelId}`);
 
-      db.prepare('DELETE FROM voice_states WHERE user_id = ? AND channel_id = ?').run(userId, channelId);
+      await db.run('DELETE FROM voice_states WHERE user_id = ? AND channel_id = ?', [userId, channelId]);
 
       io.to(`voice:${channelId}`).emit('voice_state_update', {
         channelId,
@@ -195,7 +195,7 @@ function setupSocketHandlers(io) {
       });
 
       // Get server for broadcast
-      const channel = db.prepare('SELECT server_id FROM channels WHERE id = ?').get(channelId);
+      const channel = await db.get('SELECT server_id FROM channels WHERE id = ?', [channelId]);
       if (channel?.server_id) {
         io.to(`server:${channel.server_id}`).emit('voice_channel_update', {
           channelId,
@@ -206,15 +206,15 @@ function setupSocketHandlers(io) {
       if (channelVoice.size === 0) voiceConnections.delete(channelId);
     });
 
-    socket.on('voice_state', ({ channelId, selfMute, selfDeaf }) => {
+    socket.on('voice_state', async ({ channelId, selfMute, selfDeaf }) => {
       const channelVoice = voiceConnections.get(channelId);
       if (!channelVoice || !channelVoice.has(userId)) return;
 
       channelVoice.get(userId).selfMute = selfMute;
       channelVoice.get(userId).selfDeaf = selfDeaf;
 
-      db.prepare('UPDATE voice_states SET self_mute = ?, self_deaf = ? WHERE user_id = ? AND channel_id = ?')
-        .run(selfMute ? 1 : 0, selfDeaf ? 1 : 0, userId, channelId);
+      await db.run('UPDATE voice_states SET self_mute = ?, self_deaf = ? WHERE user_id = ? AND channel_id = ?',
+        [selfMute ? 1 : 0, selfDeaf ? 1 : 0, userId, channelId]);
 
       io.to(`voice:${channelId}`).emit('voice_state_update', {
         channelId,
@@ -255,13 +255,13 @@ function setupSocketHandlers(io) {
 
     // --- Status ---
 
-    socket.on('status_change', (status) => {
+    socket.on('status_change', async (status) => {
       const validStatuses = ['online', 'idle', 'dnd', 'invisible'];
       if (!validStatuses.includes(status)) return;
       const dbStatus = status === 'invisible' ? 'offline' : status;
-      db.prepare('UPDATE users SET status = ? WHERE id = ?').run(dbStatus, userId);
-      const servers = db.prepare('SELECT server_id FROM server_members WHERE user_id = ?').all(userId);
-      for (const s of servers) {
+      await db.run('UPDATE users SET status = ? WHERE id = ?', [dbStatus, userId]);
+      const srvs = await db.all('SELECT server_id FROM server_members WHERE user_id = ?', [userId]);
+      for (const s of srvs) {
         io.to(`server:${s.server_id}`).emit('presence_update', { userId, status: dbStatus });
       }
     });
@@ -278,7 +278,7 @@ function setupSocketHandlers(io) {
 
     // --- Disconnect ---
 
-    socket.on('disconnect', () => {
+    socket.on('disconnect', async () => {
       console.log(`User disconnected: ${userId} (socket: ${socket.id})`);
 
       const userSockets = onlineUsers.get(userId);
@@ -287,11 +287,11 @@ function setupSocketHandlers(io) {
         if (userSockets.size === 0) {
           onlineUsers.delete(userId);
           // Set offline
-          db.prepare('UPDATE users SET status = ? WHERE id = ?').run('offline', userId);
+          await db.run('UPDATE users SET status = ? WHERE id = ?', ['offline', userId]);
 
           // Broadcast offline status
-          const servers = db.prepare('SELECT server_id FROM server_members WHERE user_id = ?').all(userId);
-          for (const s of servers) {
+          const srvs = await db.all('SELECT server_id FROM server_members WHERE user_id = ?', [userId]);
+          for (const s of srvs) {
             io.to(`server:${s.server_id}`).emit('presence_update', { userId, status: 'offline' });
           }
         }
@@ -307,9 +307,9 @@ function setupSocketHandlers(io) {
             action: 'leave',
           });
 
-          db.prepare('DELETE FROM voice_states WHERE user_id = ? AND channel_id = ?').run(userId, channelId);
+          await db.run('DELETE FROM voice_states WHERE user_id = ? AND channel_id = ?', [userId, channelId]);
 
-          const channel = db.prepare('SELECT server_id FROM channels WHERE id = ?').get(channelId);
+          const channel = await db.get('SELECT server_id FROM channels WHERE id = ?', [channelId]);
           if (channel?.server_id) {
             io.to(`server:${channel.server_id}`).emit('voice_channel_update', {
               channelId,

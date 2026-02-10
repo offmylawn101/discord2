@@ -28,6 +28,16 @@ const io = new Server(server, {
   },
 });
 
+// Redis adapter for multi-process scaling
+if (process.env.REDIS_URL) {
+  const { createAdapter } = require('@socket.io/redis-adapter');
+  const { Redis } = require('ioredis');
+  const pub = new Redis(process.env.REDIS_URL);
+  const sub = pub.duplicate();
+  io.adapter(createAdapter(pub, sub));
+  console.log('Socket.IO using Redis adapter');
+}
+
 // Middleware
 app.use(cors({
   origin: process.env.CLIENT_URL || 'http://localhost:5173',
@@ -53,19 +63,19 @@ app.use('/api/relationships', authenticate, relationshipRoutes);
 
 // Users search
 const db = require('./models/database');
-app.get('/api/users/search', authenticate, (req, res) => {
+app.get('/api/users/search', authenticate, async (req, res) => {
   const { q } = req.query;
   if (!q || q.length < 1) return res.json([]);
-  const users = db.prepare(`
+  const users = await db.all(`
     SELECT id, username, discriminator, avatar, status
     FROM users WHERE username LIKE ? LIMIT 20
-  `).all(`%${q}%`);
+  `, [`%${q}%`]);
   res.json(users);
 });
 
 // Get user by ID
-app.get('/api/users/:userId', authenticate, (req, res) => {
-  const user = db.prepare('SELECT id, username, discriminator, avatar, status, banner_color, about_me, custom_status, created_at FROM users WHERE id = ?').get(req.params.userId);
+app.get('/api/users/:userId', authenticate, async (req, res) => {
+  const user = await db.get('SELECT id, username, discriminator, avatar, status, banner_color, about_me, custom_status, created_at FROM users WHERE id = ?', [req.params.userId]);
   if (!user) return res.status(404).json({ error: 'User not found' });
   res.json(user);
 });
@@ -82,7 +92,7 @@ setupSocketHandlers(io);
 // Make io accessible to routes
 app.set('io', io);
 
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 3005;
 server.listen(PORT, () => {
   console.log(`Discord2 server running on port ${PORT}`);
 });
