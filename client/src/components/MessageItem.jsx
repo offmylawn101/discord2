@@ -141,7 +141,14 @@ export default function MessageItem({
 
         {showHeader && (
           <div className="message-header">
-            <span className="author" style={{ color: avatarColor }} onClick={handleAvatarClick}>{message.username}</span>
+            <span className="author" style={{ color: avatarColor }} onClick={handleAvatarClick}>
+              {message.nickname || message.username}
+            </span>
+            {message.nickname && (
+              <span style={{ fontSize: 12, color: 'var(--text-muted)', marginLeft: 4, fontWeight: 400 }} title={`${message.username}#${message.discriminator}`}>
+                {message.username}
+              </span>
+            )}
             <span className="timestamp">{formatTime(message.created_at)}</span>
           </div>
         )}
