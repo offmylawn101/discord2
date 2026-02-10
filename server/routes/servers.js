@@ -383,6 +383,71 @@ router.get('/:serverId/search', authenticate, async (req, res) => {
   }
 });
 
+// Set own nickname
+router.patch('/:serverId/members/@me/nickname', authenticate, async (req, res) => {
+  try {
+    const { serverId } = req.params;
+    const { nickname } = req.body;
+
+    const member = await db.get('SELECT 1 FROM server_members WHERE server_id = ? AND user_id = ?', [serverId, req.userId]);
+    if (!member) return res.status(403).json({ error: 'Not a member of this server' });
+
+    if (!await checkPermission(db, req.userId, serverId, null, PERMISSIONS.CHANGE_NICKNAME)) {
+      return res.status(403).json({ error: 'Missing CHANGE_NICKNAME permission' });
+    }
+
+    const cleanNickname = nickname && nickname.trim() ? nickname.trim() : null;
+    if (cleanNickname && (cleanNickname.length < 1 || cleanNickname.length > 32)) {
+      return res.status(400).json({ error: 'Nickname must be 1-32 characters' });
+    }
+
+    await db.run('UPDATE server_members SET nickname = ? WHERE server_id = ? AND user_id = ?', [cleanNickname, serverId, req.userId]);
+    await cache.del(`server:${serverId}:detail`);
+
+    const io = req.app.get('io');
+    io?.to(`server:${serverId}`).emit('nickname_update', { serverId, userId: req.userId, nickname: cleanNickname });
+
+    res.json({ userId: req.userId, nickname: cleanNickname });
+  } catch (err) {
+    console.error('Set own nickname error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Set another member's nickname (admin)
+router.patch('/:serverId/members/:userId/nickname', authenticate, async (req, res) => {
+  try {
+    const { serverId, userId } = req.params;
+    const { nickname } = req.body;
+
+    const requesterMember = await db.get('SELECT 1 FROM server_members WHERE server_id = ? AND user_id = ?', [serverId, req.userId]);
+    if (!requesterMember) return res.status(403).json({ error: 'Not a member of this server' });
+
+    const targetMember = await db.get('SELECT 1 FROM server_members WHERE server_id = ? AND user_id = ?', [serverId, userId]);
+    if (!targetMember) return res.status(404).json({ error: 'Target user is not a member of this server' });
+
+    if (!await checkPermission(db, req.userId, serverId, null, PERMISSIONS.MANAGE_NICKNAMES)) {
+      return res.status(403).json({ error: 'Missing MANAGE_NICKNAMES permission' });
+    }
+
+    const cleanNickname = nickname && nickname.trim() ? nickname.trim() : null;
+    if (cleanNickname && (cleanNickname.length < 1 || cleanNickname.length > 32)) {
+      return res.status(400).json({ error: 'Nickname must be 1-32 characters' });
+    }
+
+    await db.run('UPDATE server_members SET nickname = ? WHERE server_id = ? AND user_id = ?', [cleanNickname, serverId, userId]);
+    await cache.del(`server:${serverId}:detail`);
+
+    const io = req.app.get('io');
+    io?.to(`server:${serverId}`).emit('nickname_update', { serverId, userId, nickname: cleanNickname });
+
+    res.json({ userId, nickname: cleanNickname });
+  } catch (err) {
+    console.error('Set member nickname error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // Get server members (paginated)
 router.get('/:serverId/members', authenticate, async (req, res) => {
   try {
