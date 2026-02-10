@@ -61,27 +61,60 @@ router.get('/:channelId/messages', authenticate, async (req, res) => {
     let messages = await db.all(query, params);
     messages.reverse(); // Return in chronological order
 
-    // Attach reactions and attachments
-    for (const msg of messages) {
-      msg.attachments = await db.all('SELECT * FROM attachments WHERE message_id = ?', [msg.id]);
-      const reactions = await db.all(`
-        SELECT emoji, COUNT(*) as count, GROUP_CONCAT(user_id) as users
-        FROM reactions WHERE message_id = ? GROUP BY emoji
-      `, [msg.id]);
-      msg.reactions = reactions.map(r => ({
-        emoji: r.emoji,
-        count: r.count,
-        users: r.users.split(','),
-        me: r.users.split(',').includes(req.userId),
-      }));
+    // Batch-load attachments and reactions for all messages
+    if (messages.length > 0) {
+      const msgIds = messages.map(m => m.id);
+      const placeholders = msgIds.map(() => '?').join(',');
 
-      // If it's a reply, get the referenced message
-      if (msg.reply_to_id) {
-        msg.referenced_message = await db.get(`
-          SELECT m.id, m.content, m.author_id, u.username, u.avatar
-          FROM messages m INNER JOIN users u ON u.id = m.author_id
-          WHERE m.id = ?
-        `, [msg.reply_to_id]);
+      // Batch attachments
+      const allAttachments = await db.all(
+        `SELECT * FROM attachments WHERE message_id IN (${placeholders})`,
+        msgIds
+      );
+      const attachmentMap = {};
+      for (const att of allAttachments) {
+        if (!attachmentMap[att.message_id]) attachmentMap[att.message_id] = [];
+        attachmentMap[att.message_id].push(att);
+      }
+
+      // Batch reactions
+      const allReactions = await db.all(
+        `SELECT emoji, message_id, COUNT(*) as count, GROUP_CONCAT(user_id) as users
+         FROM reactions WHERE message_id IN (${placeholders}) GROUP BY message_id, emoji`,
+        msgIds
+      );
+      const reactionMap = {};
+      for (const r of allReactions) {
+        if (!reactionMap[r.message_id]) reactionMap[r.message_id] = [];
+        reactionMap[r.message_id].push({
+          emoji: r.emoji,
+          count: r.count,
+          users: r.users.split(','),
+          me: r.users.split(',').includes(req.userId),
+        });
+      }
+
+      // Batch referenced messages (replies)
+      const replyIds = messages.filter(m => m.reply_to_id).map(m => m.reply_to_id);
+      const replyMap = {};
+      if (replyIds.length > 0) {
+        const replyPlaceholders = replyIds.map(() => '?').join(',');
+        const refs = await db.all(
+          `SELECT m.id, m.content, m.author_id, u.username, u.avatar
+           FROM messages m INNER JOIN users u ON u.id = m.author_id
+           WHERE m.id IN (${replyPlaceholders})`,
+          replyIds
+        );
+        for (const ref of refs) {
+          replyMap[ref.id] = ref;
+        }
+      }
+
+      // Assign to messages
+      for (const msg of messages) {
+        msg.attachments = attachmentMap[msg.id] || [];
+        msg.reactions = reactionMap[msg.id] || [];
+        msg.referenced_message = msg.reply_to_id ? (replyMap[msg.reply_to_id] || null) : null;
       }
     }
 
@@ -93,6 +126,13 @@ router.get('/:channelId/messages', authenticate, async (req, res) => {
         VALUES (?, ?, ?, 0)
         ON CONFLICT(user_id, channel_id) DO UPDATE SET last_message_id = ?, mention_count = 0
       `, [req.userId, channelId, lastMsg.id, lastMsg.id]);
+    }
+
+    // Add pagination headers
+    if (messages.length > 0) {
+      res.set('X-Has-More', messages.length >= messageLimit ? 'true' : 'false');
+      res.set('X-First-Id', messages[0].id);
+      res.set('X-Last-Id', messages[messages.length - 1].id);
     }
 
     res.json(messages);
