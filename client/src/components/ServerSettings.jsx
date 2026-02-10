@@ -441,6 +441,248 @@ function ServerBans() {
   );
 }
 
+function ServerEmojis() {
+  const { currentServer, serverEmojis, uploadEmoji, deleteEmoji, renameEmoji } = useStore();
+  const [uploading, setUploading] = useState(false);
+  const [newEmojiName, setNewEmojiName] = useState('');
+  const [error, setError] = useState('');
+  const [editingId, setEditingId] = useState(null);
+  const [editName, setEditName] = useState('');
+  const fileInputRef = useRef(null);
+  const [selectedFile, setSelectedFile] = useState(null);
+  const [filePreview, setFilePreview] = useState(null);
+
+  const handleFileSelect = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 256 * 1024) {
+      setError('File must be under 256KB');
+      e.target.value = '';
+      return;
+    }
+    if (!file.type.startsWith('image/')) {
+      setError('Only image files are allowed');
+      e.target.value = '';
+      return;
+    }
+    setSelectedFile(file);
+    setFilePreview(URL.createObjectURL(file));
+    setError('');
+    if (!newEmojiName) {
+      const baseName = file.name.replace(/\.\w+$/, '').replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 32);
+      setNewEmojiName(baseName);
+    }
+  };
+
+  const handleUpload = async () => {
+    if (!selectedFile || !newEmojiName.trim()) return;
+    const name = newEmojiName.trim().replace(/[^a-zA-Z0-9_]/g, '');
+    if (name.length < 2) {
+      setError('Name must be at least 2 characters');
+      return;
+    }
+    setUploading(true);
+    setError('');
+    try {
+      await uploadEmoji(currentServer.id, name, selectedFile);
+      setNewEmojiName('');
+      setSelectedFile(null);
+      setFilePreview(null);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    } catch (err) {
+      setError(err.message || 'Upload failed');
+    }
+    setUploading(false);
+  };
+
+  const handleDelete = async (emojiId) => {
+    try {
+      await deleteEmoji(currentServer.id, emojiId);
+    } catch (err) {
+      setError(err.message || 'Delete failed');
+    }
+  };
+
+  const handleRename = async (emojiId) => {
+    const name = editName.trim().replace(/[^a-zA-Z0-9_]/g, '');
+    if (name.length < 2) {
+      setError('Name must be at least 2 characters');
+      return;
+    }
+    try {
+      await renameEmoji(currentServer.id, emojiId, name);
+      setEditingId(null);
+      setEditName('');
+    } catch (err) {
+      setError(err.message || 'Rename failed');
+    }
+  };
+
+  const formatDate = (d) => {
+    const date = new Date(d);
+    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  };
+
+  return (
+    <>
+      <div className="settings-title">Emoji</div>
+      <p style={{ color: 'var(--text-muted)', fontSize: 14, marginBottom: 16 }}>
+        Add custom emoji for everyone on this server to use. Emoji must be under 256KB.
+      </p>
+
+      {error && (
+        <div style={{ padding: '8px 12px', background: 'rgba(237, 66, 69, 0.15)', color: '#ED4245', borderRadius: 4, marginBottom: 12, fontSize: 13 }}>
+          {error}
+        </div>
+      )}
+
+      {/* Upload section */}
+      <div style={{ marginBottom: 24, padding: 16, background: 'var(--bg-secondary)', borderRadius: 8 }}>
+        <h4 style={{ color: 'var(--header-secondary)', marginBottom: 12, fontSize: 14 }}>Upload Emoji</h4>
+        <div style={{ display: 'flex', gap: 12, alignItems: 'flex-end' }}>
+          <div>
+            <div
+              style={{
+                width: 48, height: 48, borderRadius: 4, background: 'var(--bg-tertiary)',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                cursor: 'pointer', overflow: 'hidden', border: '2px dashed var(--bg-modifier-active)',
+              }}
+              onClick={() => fileInputRef.current?.click()}
+            >
+              {filePreview ? (
+                <img src={filePreview} alt="" style={{ width: 40, height: 40, objectFit: 'contain' }} />
+              ) : (
+                <span style={{ fontSize: 20, color: 'var(--text-muted)' }}>+</span>
+              )}
+            </div>
+            <input
+              type="file"
+              ref={fileInputRef}
+              accept="image/*"
+              onChange={handleFileSelect}
+              hidden
+            />
+          </div>
+          <div className="form-group" style={{ flex: 1, marginBottom: 0 }}>
+            <label className="form-label">Name</label>
+            <input
+              className="form-input"
+              value={newEmojiName}
+              onChange={e => setNewEmojiName(e.target.value.replace(/[^a-zA-Z0-9_]/g, ''))}
+              placeholder="emoji_name"
+              maxLength={32}
+            />
+          </div>
+          <button
+            className="btn btn-primary"
+            onClick={handleUpload}
+            disabled={uploading || !selectedFile || !newEmojiName.trim()}
+            style={{ height: 38 }}
+          >
+            {uploading ? 'Uploading...' : 'Upload'}
+          </button>
+        </div>
+        {newEmojiName && (
+          <div style={{ marginTop: 8, fontSize: 13, color: 'var(--text-muted)' }}>
+            Will be used as <code style={{ background: 'var(--bg-tertiary)', padding: '1px 4px', borderRadius: 3 }}>:{newEmojiName}:</code>
+          </div>
+        )}
+      </div>
+
+      {/* Emoji list */}
+      <h4 style={{ color: 'var(--header-secondary)', marginBottom: 8, fontSize: 14 }}>
+        Emoji - {serverEmojis.length}
+      </h4>
+      {serverEmojis.length === 0 ? (
+        <div style={{ color: 'var(--text-muted)', padding: 16, textAlign: 'center' }}>
+          No custom emoji yet. Upload one above!
+        </div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+          {/* Header row */}
+          <div style={{
+            display: 'flex', alignItems: 'center', padding: '6px 12px', gap: 12,
+            fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase',
+          }}>
+            <span style={{ width: 40 }}>Image</span>
+            <span style={{ flex: 1 }}>Name</span>
+            <span style={{ width: 100 }}>Uploaded</span>
+            <span style={{ width: 60 }}></span>
+          </div>
+          {serverEmojis.map(emoji => (
+            <div key={emoji.id} style={{
+              display: 'flex', alignItems: 'center', padding: '8px 12px',
+              background: 'var(--bg-secondary)', borderRadius: 4, gap: 12,
+            }}>
+              <img
+                src={emoji.image_url}
+                alt={emoji.name}
+                style={{ width: 32, height: 32, objectFit: 'contain', borderRadius: 4 }}
+              />
+              <div style={{ flex: 1 }}>
+                {editingId === emoji.id ? (
+                  <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                    <input
+                      className="form-input"
+                      value={editName}
+                      onChange={e => setEditName(e.target.value.replace(/[^a-zA-Z0-9_]/g, ''))}
+                      onKeyDown={e => {
+                        if (e.key === 'Enter') handleRename(emoji.id);
+                        if (e.key === 'Escape') { setEditingId(null); setEditName(''); }
+                      }}
+                      style={{ padding: '2px 6px', fontSize: 13, height: 28 }}
+                      autoFocus
+                    />
+                    <button
+                      className="btn btn-primary"
+                      onClick={() => handleRename(emoji.id)}
+                      style={{ padding: '2px 8px', fontSize: 12, height: 28 }}
+                    >
+                      Save
+                    </button>
+                    <button
+                      className="btn"
+                      onClick={() => { setEditingId(null); setEditName(''); }}
+                      style={{ padding: '2px 8px', fontSize: 12, height: 28, background: 'var(--bg-tertiary)', color: 'var(--text-normal)' }}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                ) : (
+                  <span
+                    style={{ cursor: 'pointer', fontWeight: 500 }}
+                    onClick={() => { setEditingId(emoji.id); setEditName(emoji.name); }}
+                    title="Click to rename"
+                  >
+                    :{emoji.name}:
+                  </span>
+                )}
+              </div>
+              <span style={{ width: 100, fontSize: 12, color: 'var(--text-muted)' }}>
+                {formatDate(emoji.created_at)}
+              </span>
+              <button
+                onClick={() => handleDelete(emoji.id)}
+                style={{
+                  width: 28, height: 28, background: 'transparent', border: 'none',
+                  color: 'var(--text-muted)', cursor: 'pointer', borderRadius: 4,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontSize: 16,
+                }}
+                onMouseEnter={e => { e.currentTarget.style.background = 'rgba(237,66,69,0.15)'; e.currentTarget.style.color = '#ED4245'; }}
+                onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--text-muted)'; }}
+                title="Delete emoji"
+              >
+                X
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
+
 function ServerAuditLog() {
   const { currentServer } = useStore();
   const [entries, setEntries] = useState([]);
