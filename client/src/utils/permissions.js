@@ -20,6 +20,7 @@ export const PERMISSIONS = {
   MUTE_MEMBERS:           1n << 22n,
   DEAFEN_MEMBERS:         1n << 23n,
   MOVE_MEMBERS:           1n << 24n,
+  VIEW_AUDIT_LOG:         1n << 7n,
 };
 
 export function hasPermission(perms, perm) {
