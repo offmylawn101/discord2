@@ -445,6 +445,18 @@ export const useStore = create((set, get) => ({
     await api.put(`/servers/${serverId}/members/${userId}/roles/${roleId}`);
   },
 
+  // Nickname
+  setNickname: async (serverId, userId, nickname) => {
+    const isSelf = userId === get().user.id;
+    const endpoint = isSelf
+      ? `/servers/${serverId}/members/@me/nickname`
+      : `/servers/${serverId}/members/${userId}/nickname`;
+    await api.patch(endpoint, { nickname: nickname || null });
+    set(s => ({
+      members: s.members.map(m => m.id === userId ? { ...m, nickname: nickname || null } : m),
+    }));
+  },
+
   // Typing
   setTypingUser: (channelId, userId, username) => {
     set(s => ({
