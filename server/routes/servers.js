@@ -155,16 +155,28 @@ router.get('/:serverId', authenticate, async (req, res) => {
     const roles = await db.all('SELECT * FROM roles WHERE server_id = ? ORDER BY position DESC', [serverId]);
     const members = await db.all(`
       SELECT u.id, u.username, u.discriminator, u.avatar, u.status, u.custom_status,
-             sm.nickname, sm.joined_at, sm.muted, sm.deafened
+             sm.nickname, sm.joined_at, sm.muted, sm.deafened,
+             ua.type AS activity_type, ua.name AS activity_name, ua.details AS activity_details, ua.started_at AS activity_started_at
       FROM server_members sm
       INNER JOIN users u ON u.id = sm.user_id
+      LEFT JOIN user_activities ua ON ua.user_id = u.id
       WHERE sm.server_id = ?
     `, [serverId]);
 
-    // Get member roles
+    // Get member roles and structure activity
     for (const m of members) {
       const memberRoles = await db.all('SELECT role_id FROM member_roles WHERE server_id = ? AND user_id = ?', [serverId, m.id]);
       m.roles = memberRoles.map(r => r.role_id);
+      // Structure activity data
+      if (m.activity_type) {
+        m.activity = { type: m.activity_type, name: m.activity_name, details: m.activity_details, started_at: m.activity_started_at };
+      } else {
+        m.activity = null;
+      }
+      delete m.activity_type;
+      delete m.activity_name;
+      delete m.activity_details;
+      delete m.activity_started_at;
     }
 
     const emojis = await db.all('SELECT * FROM server_emojis WHERE server_id = ? ORDER BY created_at', [serverId]);
@@ -800,6 +812,99 @@ router.patch('/:serverId/categories/reorder', authenticate, async (req, res) => 
     res.json(updated);
   } catch (err) {
     console.error('Reorder categories error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ============ Welcome Screen Endpoints ============
+
+// Get welcome screen config
+router.get('/:serverId/welcome', authenticate, async (req, res) => {
+  try {
+    const { serverId } = req.params;
+    const member = await db.get('SELECT 1 FROM server_members WHERE server_id = ? AND user_id = ?', [serverId, req.userId]);
+    if (!member) return res.status(403).json({ error: 'Not a member of this server' });
+
+    const welcome = await db.get('SELECT * FROM welcome_screens WHERE server_id = ?', [serverId]);
+    if (!welcome) {
+      return res.json({ server_id: serverId, enabled: 0, description: '', welcome_channels: [] });
+    }
+
+    let welcomeChannels = [];
+    try {
+      welcomeChannels = JSON.parse(welcome.welcome_channels || '[]');
+    } catch {
+      welcomeChannels = [];
+    }
+
+    res.json({
+      server_id: welcome.server_id,
+      enabled: welcome.enabled,
+      description: welcome.description,
+      welcome_channels: welcomeChannels,
+      updated_at: welcome.updated_at,
+    });
+  } catch (err) {
+    console.error('Get welcome screen error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Update welcome screen config (owner/admin only)
+router.put('/:serverId/welcome', authenticate, async (req, res) => {
+  try {
+    const { serverId } = req.params;
+    if (!await checkPermission(db, req.userId, serverId, null, PERMISSIONS.MANAGE_SERVER)) {
+      return res.status(403).json({ error: 'Missing MANAGE_SERVER permission' });
+    }
+
+    const { enabled, description, channels } = req.body;
+
+    // Validate channels array
+    let welcomeChannels = [];
+    if (Array.isArray(channels)) {
+      welcomeChannels = channels.map(ch => ({
+        channelId: ch.channelId,
+        description: (ch.description || '').slice(0, 200),
+        emoji: ch.emoji || '',
+      }));
+    }
+
+    const welcomeChannelsJson = JSON.stringify(welcomeChannels);
+    const existing = await db.get('SELECT server_id FROM welcome_screens WHERE server_id = ?', [serverId]);
+
+    if (existing) {
+      await db.run(
+        'UPDATE welcome_screens SET enabled = ?, description = ?, welcome_channels = ?, updated_at = CURRENT_TIMESTAMP WHERE server_id = ?',
+        [enabled ? 1 : 0, (description || '').slice(0, 500), welcomeChannelsJson, serverId]
+      );
+    } else {
+      await db.run(
+        'INSERT INTO welcome_screens (server_id, enabled, description, welcome_channels) VALUES (?, ?, ?, ?)',
+        [serverId, enabled ? 1 : 0, (description || '').slice(0, 500), welcomeChannelsJson]
+      );
+    }
+
+    await cache.del(`server:${serverId}:detail`);
+
+    const io = req.app.get('io');
+    if (io) {
+      io.to(`server:${serverId}`).emit('welcome_screen_update', {
+        server_id: serverId,
+        enabled: enabled ? 1 : 0,
+        description: (description || '').slice(0, 500),
+        welcome_channels: welcomeChannels,
+      });
+    }
+
+    res.json({
+      server_id: serverId,
+      enabled: enabled ? 1 : 0,
+      description: (description || '').slice(0, 500),
+      welcome_channels: welcomeChannels,
+    });
+  } catch (err) {
+    console.error('Update welcome screen error:', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

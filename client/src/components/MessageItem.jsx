@@ -279,6 +279,10 @@ export default function MessageItem({
               escape to <span style={{ color: 'var(--text-link)', cursor: 'pointer' }} onClick={onEditCancel}>cancel</span> · enter to <span style={{ color: 'var(--text-link)', cursor: 'pointer' }} onClick={onEditSave}>save</span>
             </div>
           </div>
+        ) : message.type === 'poll' ? (
+          <div className="message-content" style={{ position: 'relative' }}>
+            {/* Poll content is shown in the PollDisplay component below */}
+          </div>
         ) : (
           <div className="message-content" style={{ position: 'relative' }}>
             {renderMarkdown(message.content)}
@@ -324,6 +328,11 @@ export default function MessageItem({
               </div>
             )}
           </div>
+        )}
+
+        {/* Poll display */}
+        {message.type === 'poll' && message.poll && (
+          <PollDisplay poll={message.poll} messageId={message.id} />
         )}
 
         {/* Thread indicator */}
@@ -507,6 +516,23 @@ export default function MessageItem({
       {/* Message actions toolbar - hidden during bulk select */}
       {!bulkSelectMode && (
         <div className="message-actions">
+          {/* Quick Reactions */}
+          <div className="quick-reactions">
+            {(JSON.parse(localStorage.getItem('recentEmojis') || '[]').length > 0
+              ? JSON.parse(localStorage.getItem('recentEmojis') || '[]').slice(0, 6)
+              : ['👍', '❤️', '😂', '😮', '😢', '🔥']
+            ).map((emoji, i) => (
+              <button
+                key={i}
+                className="quick-reaction-btn"
+                onClick={(e) => { e.stopPropagation(); handleReaction(emoji); }}
+                title={`React with ${emoji}`}
+              >
+                {emoji}
+              </button>
+            ))}
+          </div>
+          <div className="quick-reactions-divider" />
           <button className="message-action-btn" onClick={() => setShowEmoji(!showEmoji)} title="Add Reaction">😀</button>
           <button className="message-action-btn" onClick={() => onReply(message)} title="Reply">↩</button>
           <button className="message-action-btn" onClick={handlePin} title={message.pinned ? 'Unpin Message' : 'Pin Message'} style={message.pinned ? { color: 'var(--brand-500)' } : {}}>📌</button>
@@ -562,6 +588,60 @@ export default function MessageItem({
           onClose={() => setContextMenu(null)}
         />
       )}
+    </div>
+  );
+}
+
+function PollDisplay({ poll, messageId }) {
+  const { votePoll, updatePollInMessage } = useStore();
+  const [voting, setVoting] = React.useState(null);
+
+  const totalVotes = poll.options.reduce((sum, o) => sum + (o.votes || 0), 0);
+
+  const handleVote = async (optionId) => {
+    if (voting) return;
+    setVoting(optionId);
+    try {
+      const updatedPoll = await votePoll(poll.id, optionId);
+      updatePollInMessage(messageId, updatedPoll);
+    } catch (err) {
+      console.error('Vote error:', err);
+    }
+    setVoting(null);
+  };
+
+  return (
+    <div className="poll-display">
+      <div className="poll-question">
+        <span className="poll-icon">📊</span>
+        {poll.question}
+      </div>
+      <div className="poll-options">
+        {poll.options.map((option) => {
+          const percentage = totalVotes > 0 ? Math.round((option.votes / totalVotes) * 100) : 0;
+          const isVoted = option.voted;
+          return (
+            <div
+              key={option.id}
+              className={`poll-option ${isVoted ? 'voted' : ''} ${voting === option.id ? 'voting' : ''}`}
+              onClick={() => handleVote(option.id)}
+            >
+              <div className="poll-option-fill" style={{ width: `${percentage}%` }} />
+              <div className="poll-option-content">
+                <span className="poll-option-text">
+                  {isVoted && <span className="poll-check">&#10003;</span>}
+                  {option.text}
+                </span>
+                <span className="poll-option-percent">{percentage}%</span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <div className="poll-footer">
+        <span className="poll-vote-count">{totalVotes} vote{totalVotes !== 1 ? 's' : ''}</span>
+        {poll.allows_multiple && <span className="poll-multi-badge">Multiple choice</span>}
+      </div>
     </div>
   );
 }

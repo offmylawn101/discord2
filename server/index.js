@@ -103,6 +103,7 @@ app.use('/api/discover', discoverRoutes);
 app.use('/api/notifications', authenticate, notificationRoutes);
 app.use('/api/folders', authenticate, folderRoutes);
 app.use('/api/bookmarks', authenticate, require('./routes/bookmarks'));
+app.use('/api/polls', require('./routes/polls'));
 app.use('/api/gif', gifRoutes); // No auth needed
 
 // Users search

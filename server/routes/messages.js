@@ -114,11 +114,41 @@ router.get('/:channelId/messages', authenticate, async (req, res) => {
         }
       }
 
+      // Batch poll data for poll-type messages
+      const pollMessages = messages.filter(m => m.type === 'poll');
+      const pollMap = {};
+      if (pollMessages.length > 0) {
+        const pollMsgIds = pollMessages.map(m => m.id);
+        const pollPlaceholders = pollMsgIds.map(() => '?').join(',');
+        const polls = await db.all(
+          `SELECT * FROM polls WHERE message_id IN (${pollPlaceholders})`,
+          pollMsgIds
+        );
+        for (const poll of polls) {
+          const options = await db.all('SELECT * FROM poll_options WHERE poll_id = ? ORDER BY position', [poll.id]);
+          const votes = await db.all('SELECT option_id, user_id FROM poll_votes WHERE poll_id = ?', [poll.id]);
+          pollMap[poll.message_id] = {
+            id: poll.id,
+            question: poll.question,
+            allows_multiple: !!poll.allows_multiple,
+            options: options.map(o => ({
+              ...o,
+              votes: votes.filter(v => v.option_id === o.id).length,
+              voted: votes.some(v => v.option_id === o.id && v.user_id === req.userId),
+            })),
+            total_votes: [...new Set(votes.map(v => v.user_id))].length,
+          };
+        }
+      }
+
       // Assign to messages
       for (const msg of messages) {
         msg.attachments = attachmentMap[msg.id] || [];
         msg.reactions = reactionMap[msg.id] || [];
         msg.referenced_message = msg.reply_to_id ? (replyMap[msg.reply_to_id] || null) : null;
+        if (msg.type === 'poll' && pollMap[msg.id]) {
+          msg.poll = pollMap[msg.id];
+        }
       }
     }
 

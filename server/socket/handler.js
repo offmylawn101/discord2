@@ -29,10 +29,14 @@ function setupSocketHandlers(io) {
       socket.join(`channel:${dm.channel_id}`);
     }
 
-    // Broadcast presence update
+    // Broadcast presence update (including activity)
     const user = await db.get('SELECT id, username, discriminator, avatar, status, custom_status FROM users WHERE id = ?', [userId]);
+    const userActivity = await db.get('SELECT type, name, details, started_at FROM user_activities WHERE user_id = ?', [userId]);
     for (const s of servers) {
       io.to(`server:${s.server_id}`).emit('presence_update', { userId, status: user.status, custom_status: user.custom_status });
+      if (userActivity) {
+        io.to(`server:${s.server_id}`).emit('activity_update', { userId, activity: userActivity });
+      }
     }
 
     // --- Channel events ---
@@ -295,6 +299,16 @@ function setupSocketHandlers(io) {
       const srvs = await db.all('SELECT server_id FROM server_members WHERE user_id = ?', [userId]);
       for (const s of srvs) {
         io.to(`server:${s.server_id}`).emit('presence_update', { userId, status: dbStatus });
+      }
+    });
+
+    // --- Activity ---
+
+    socket.on('activity_update', async (activity) => {
+      // activity = { type, name, details } or null to clear
+      const srvs = await db.all('SELECT server_id FROM server_members WHERE user_id = ?', [userId]);
+      for (const s of srvs) {
+        io.to(`server:${s.server_id}`).emit('activity_update', { userId, activity: activity || null });
       }
     });
 

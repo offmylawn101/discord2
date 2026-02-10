@@ -237,6 +237,20 @@ export default function Sidebar({ isHome }) {
     setServerContextMenu({ x: e.clientX, y: e.clientY });
   };
 
+  const currentUserActivity = useStore(s => s.userActivities[user?.id]);
+
+  const getActivityLabel = (type) => {
+    switch (type) {
+      case 'playing': return 'Playing';
+      case 'listening': return 'Listening to';
+      case 'watching': return 'Watching';
+      case 'streaming': return 'Streaming';
+      case 'competing': return 'Competing in';
+      case 'custom': return '';
+      default: return '';
+    }
+  };
+
   const userPanel = (
     <div className="user-panel" style={{ position: 'relative' }}>
       <div
@@ -258,7 +272,14 @@ export default function Sidebar({ isHome }) {
       </div>
       <div className="user-info">
         <div className="name">{user?.username}</div>
-        <div className="tag">{user?.custom_status || `#${user?.discriminator}`}</div>
+        {currentUserActivity ? (
+          <div className="member-activity" style={{ maxWidth: 100 }}>
+            <span className="activity-type">{getActivityLabel(currentUserActivity.type)}</span>{' '}
+            <span className="activity-name">{currentUserActivity.name}</span>
+          </div>
+        ) : (
+          <div className="tag">{user?.custom_status || `#${user?.discriminator}`}</div>
+        )}
       </div>
       <div className="panel-buttons">
         <button className="panel-btn" onClick={toggleSettings} title="User Settings">⚙</button>

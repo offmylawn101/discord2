@@ -14,7 +14,13 @@ export default function App() {
   useEffect(() => {
     if (token && !user) {
       api.get('/auth/me')
-        .then(setUser)
+        .then(userData => {
+          setUser(userData);
+          // Load user's own activity
+          if (userData.activity) {
+            useStore.getState().updateUserActivity(userData.id, userData.activity);
+          }
+        })
         .catch(() => logout());
     }
   }, [token]);
@@ -39,6 +45,9 @@ export default function App() {
       });
       socket.on('presence_update', ({ userId, status }) => {
         useStore.getState().updatePresence(userId, status);
+      });
+      socket.on('activity_update', ({ userId, activity }) => {
+        useStore.getState().updateUserActivity(userId, activity);
       });
       socket.on('voice_state_update', (data) => {
         const state = useStore.getState();
@@ -76,6 +85,9 @@ export default function App() {
           });
           useStore.setState({ messages });
         }
+      });
+      socket.on('poll_update', ({ messageId, poll }) => {
+        useStore.getState().updatePollInMessage(messageId, poll);
       });
       socket.on('reaction_remove', ({ channelId, messageId, userId, emoji }) => {
         const state = useStore.getState();

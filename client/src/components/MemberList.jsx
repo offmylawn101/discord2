@@ -102,9 +102,22 @@ export default function MemberList() {
   );
 }
 
+function getActivityLabel(type) {
+  switch (type) {
+    case 'playing': return 'Playing';
+    case 'listening': return 'Listening to';
+    case 'watching': return 'Watching';
+    case 'streaming': return 'Streaming';
+    case 'competing': return 'Competing in';
+    case 'custom': return '';
+    default: return '';
+  }
+}
+
 function MemberItem({ member, role, onShowProfile }) {
   const avatarColor = `hsl(${(member.id || '').split('').reduce((a, c) => a + c.charCodeAt(0), 0) % 360}, 60%, 50%)`;
   const nameColor = role?.color !== '#99AAB5' ? role?.color : undefined;
+  const activity = useStore(s => s.userActivities[member.id]);
 
   return (
     <div className="member-item" onClick={onShowProfile}>
@@ -116,9 +129,17 @@ function MemberItem({ member, role, onShowProfile }) {
         )}
         <div className={`status-dot ${member.status || 'offline'}`} />
       </div>
-      <span className={`member-name ${member.status !== 'offline' ? 'online' : ''}`} style={{ color: nameColor }}>
-        {member.nickname || member.username}
-      </span>
+      <div style={{ overflow: 'hidden', flex: 1 }}>
+        <span className={`member-name ${member.status !== 'offline' ? 'online' : ''}`} style={{ color: nameColor }}>
+          {member.nickname || member.username}
+        </span>
+        {activity && (
+          <div className="member-activity">
+            <span className="activity-type">{getActivityLabel(activity.type)}</span>{' '}
+            <span className="activity-name">{activity.name}</span>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

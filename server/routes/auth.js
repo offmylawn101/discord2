@@ -99,8 +99,46 @@ router.get('/me', authenticate, async (req, res) => {
   try {
     const user = await db.get('SELECT * FROM users WHERE id = ?', [req.userId]);
     if (!user) return res.status(404).json({ error: 'User not found' });
-    res.json(sanitizeUser(user));
+    const activity = await db.get('SELECT type, name, details, started_at FROM user_activities WHERE user_id = ?', [req.userId]);
+    res.json({ ...sanitizeUser(user), activity: activity || null });
   } catch (err) {
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Set/clear current user activity
+router.put('/me/activity', authenticate, async (req, res) => {
+  try {
+    const { type, name, details } = req.body;
+    const validTypes = ['playing', 'streaming', 'listening', 'watching', 'competing', 'custom'];
+
+    // Empty body or missing type/name => clear activity
+    if (!type || !name) {
+      await db.run('DELETE FROM user_activities WHERE user_id = ?', [req.userId]);
+      return res.json({ activity: null });
+    }
+
+    if (!validTypes.includes(type)) {
+      return res.status(400).json({ error: 'Invalid activity type' });
+    }
+
+    if (db.isPg) {
+      await db.run(`
+        INSERT INTO user_activities (user_id, type, name, details, started_at)
+        VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT (user_id) DO UPDATE SET type = ?, name = ?, details = ?, started_at = CURRENT_TIMESTAMP
+      `, [req.userId, type, name, details || '', type, name, details || '']);
+    } else {
+      await db.run(`
+        INSERT OR REPLACE INTO user_activities (user_id, type, name, details, started_at)
+        VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+      `, [req.userId, type, name, details || '']);
+    }
+
+    const activity = await db.get('SELECT type, name, details, started_at FROM user_activities WHERE user_id = ?', [req.userId]);
+    res.json({ activity });
+  } catch (err) {
+    console.error('Activity update error:', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

@@ -47,6 +47,7 @@ export default function ChatArea() {
   const mentionStartPos = useRef(null);
   const [bulkDeleting, setBulkDeleting] = useState(false);
   const [showGifPicker, setShowGifPicker] = useState(false);
+  const [showPollCreator, setShowPollCreator] = useState(false);
   const [slowmodeRemaining, setSlowmodeRemaining] = useState(0);
   const slowmodeInterval = useRef(null);
   const [highlightedMessageId, setHighlightedMessageId] = useState(null);
@@ -1027,6 +1028,14 @@ export default function ChatArea() {
           )}
           <button
             className="emoji-btn gif-btn"
+            onClick={() => setShowPollCreator(!showPollCreator)}
+            title="Create Poll"
+            style={{ fontWeight: 700, fontSize: 14, marginRight: 4 }}
+          >
+            📊
+          </button>
+          <button
+            className="emoji-btn gif-btn"
             onClick={() => setShowGifPicker(!showGifPicker)}
             title="GIF"
             style={{ fontWeight: 700, fontSize: 12, marginRight: 4 }}
@@ -1042,6 +1051,13 @@ export default function ChatArea() {
               setShowGifPicker(false);
             }}
             onClose={() => setShowGifPicker(false)}
+          />
+        )}
+
+        {showPollCreator && (
+          <PollCreator
+            channelId={currentChannel?.id}
+            onClose={() => setShowPollCreator(false)}
           />
         )}
       </div>
@@ -1145,6 +1161,111 @@ function BookmarksPanel({ bookmarks, onClose, onRemove, onJumpToMessage }) {
           </div>
         ))
       )}
+    </div>
+  );
+}
+
+function PollCreator({ channelId, onClose }) {
+  const { createPoll } = useStore();
+  const [question, setQuestion] = React.useState('');
+  const [options, setOptions] = React.useState(['', '']);
+  const [allowsMultiple, setAllowsMultiple] = React.useState(false);
+  const [submitting, setSubmitting] = React.useState(false);
+  const panelRef = React.useRef(null);
+
+  React.useEffect(() => {
+    const handler = (e) => {
+      if (panelRef.current && !panelRef.current.contains(e.target)) {
+        onClose();
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [onClose]);
+
+  const addOption = () => {
+    if (options.length < 10) setOptions([...options, '']);
+  };
+
+  const removeOption = (idx) => {
+    if (options.length > 2) setOptions(options.filter((_, i) => i !== idx));
+  };
+
+  const updateOption = (idx, value) => {
+    setOptions(options.map((o, i) => i === idx ? value : o));
+  };
+
+  const handleSubmit = async () => {
+    const trimmedQ = question.trim();
+    const trimmedOpts = options.map(o => o.trim()).filter(o => o);
+    if (!trimmedQ || trimmedOpts.length < 2) return;
+    setSubmitting(true);
+    try {
+      await createPoll(channelId, trimmedQ, trimmedOpts, allowsMultiple);
+      onClose();
+    } catch (err) {
+      console.error('Create poll error:', err);
+    }
+    setSubmitting(false);
+  };
+
+  return (
+    <div className="poll-creator" ref={panelRef}>
+      <div className="poll-creator-header">
+        <span>Create a Poll</span>
+        <button className="poll-creator-close" onClick={onClose}>✕</button>
+      </div>
+      <div className="poll-creator-body">
+        <label className="poll-creator-label">Question</label>
+        <input
+          className="poll-creator-input"
+          placeholder="Ask a question..."
+          value={question}
+          onChange={(e) => setQuestion(e.target.value)}
+          maxLength={300}
+          autoFocus
+        />
+
+        <label className="poll-creator-label" style={{ marginTop: 12 }}>Options</label>
+        {options.map((opt, idx) => (
+          <div key={idx} className="poll-option-row">
+            <input
+              className="poll-creator-input"
+              placeholder={`Option ${idx + 1}`}
+              value={opt}
+              onChange={(e) => updateOption(idx, e.target.value)}
+              maxLength={100}
+            />
+            {options.length > 2 && (
+              <button className="poll-option-remove" onClick={() => removeOption(idx)}>✕</button>
+            )}
+          </div>
+        ))}
+        {options.length < 10 && (
+          <button className="poll-add-option" onClick={addOption}>
+            + Add Option
+          </button>
+        )}
+
+        <label className="poll-creator-checkbox">
+          <input
+            type="checkbox"
+            checked={allowsMultiple}
+            onChange={(e) => setAllowsMultiple(e.target.checked)}
+          />
+          <span>Allow multiple votes</span>
+        </label>
+      </div>
+      <div className="poll-creator-footer">
+        <button className="poll-cancel-btn" onClick={onClose}>Cancel</button>
+        <button
+          className="poll-submit-btn"
+          onClick={handleSubmit}
+          disabled={submitting || !question.trim() || options.filter(o => o.trim()).length < 2}
+        >
+          {submitting ? 'Creating...' : 'Create Poll'}
+        </button>
+      </div>
     </div>
   );
 }

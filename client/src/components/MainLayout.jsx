@@ -21,6 +21,7 @@ import EventsPanel from './EventsPanel';
 import ServerDiscovery from './ServerDiscovery';
 import SearchPanel from './SearchPanel';
 import KeyboardShortcuts from './KeyboardShortcuts';
+import WelcomeScreen from './WelcomeScreen';
 
 export default function MainLayout() {
   const {
@@ -35,6 +36,7 @@ export default function MainLayout() {
   const showEventsPanel = useStore(s => s.showEventsPanel);
   const showDiscover = useStore(s => s.showDiscover);
   const [showShortcuts, setShowShortcuts] = useState(false);
+  const [showWelcomeScreen, setShowWelcomeScreen] = useState(false);
   const navigate = useNavigate();
 
   // Track connection state
@@ -203,6 +205,25 @@ export default function MainLayout() {
     }
   }, [routeServerId]);
 
+  // Show welcome screen when selecting a new server
+  useEffect(() => {
+    if (currentServer?.id) {
+      const dismissed = localStorage.getItem(`welcomeScreenDismissed_${currentServer.id}`);
+      if (!dismissed) {
+        const { fetchWelcomeScreen } = useStore.getState();
+        fetchWelcomeScreen(currentServer.id).then(data => {
+          if (data && data.enabled) {
+            setShowWelcomeScreen(true);
+          }
+        });
+      } else {
+        setShowWelcomeScreen(false);
+      }
+    } else {
+      setShowWelcomeScreen(false);
+    }
+  }, [currentServer?.id]);
+
   const showMemberList = currentServer && currentChannel?.type === 'text';
 
   return (
@@ -243,6 +264,12 @@ export default function MainLayout() {
         <EventsPanel onClose={() => useStore.setState({ showEventsPanel: false })} />
       )}
       <ChannelSettings />
+      {showWelcomeScreen && currentServer && (
+        <WelcomeScreen
+          serverId={currentServer.id}
+          onClose={() => setShowWelcomeScreen(false)}
+        />
+      )}
     </div>
   );
 }

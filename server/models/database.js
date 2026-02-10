@@ -225,7 +225,7 @@ async function initialize() {
         channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
         author_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
         content TEXT NOT NULL DEFAULT '',
-        type TEXT DEFAULT 'default' CHECK(type IN ('default','reply','system','pin')),
+        type TEXT DEFAULT 'default' CHECK(type IN ('default','reply','system','pin','poll')),
         reply_to_id TEXT REFERENCES messages(id) ON DELETE SET NULL,
         thread_id TEXT REFERENCES channels(id) ON DELETE SET NULL,
         pinned INTEGER DEFAULT 0,
@@ -484,6 +484,50 @@ async function initialize() {
       );
       CREATE INDEX IF NOT EXISTS idx_bookmarks_user ON bookmarks(user_id);
 
+      CREATE TABLE IF NOT EXISTS polls (
+        id TEXT PRIMARY KEY,
+        message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+        question TEXT NOT NULL,
+        allows_multiple INTEGER DEFAULT 0,
+        expires_at TIMESTAMP DEFAULT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE INDEX IF NOT EXISTS idx_polls_message ON polls(message_id);
+
+      CREATE TABLE IF NOT EXISTS poll_options (
+        id TEXT PRIMARY KEY,
+        poll_id TEXT NOT NULL REFERENCES polls(id) ON DELETE CASCADE,
+        text TEXT NOT NULL,
+        position INTEGER DEFAULT 0
+      );
+      CREATE INDEX IF NOT EXISTS idx_poll_options_poll ON poll_options(poll_id);
+
+      CREATE TABLE IF NOT EXISTS poll_votes (
+        id TEXT PRIMARY KEY,
+        poll_id TEXT NOT NULL REFERENCES polls(id) ON DELETE CASCADE,
+        option_id TEXT NOT NULL REFERENCES poll_options(id) ON DELETE CASCADE,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(poll_id, option_id, user_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_poll_votes_poll ON poll_votes(poll_id);
+
+      CREATE TABLE IF NOT EXISTS user_activities (
+        user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+        type TEXT NOT NULL CHECK(type IN ('playing','streaming','listening','watching','competing','custom')),
+        name TEXT NOT NULL DEFAULT '',
+        details TEXT DEFAULT '',
+        started_at TIMESTAMP DEFAULT NOW()
+      );
+
+      CREATE TABLE IF NOT EXISTS welcome_screens (
+        server_id TEXT PRIMARY KEY REFERENCES servers(id) ON DELETE CASCADE,
+        enabled INTEGER DEFAULT 0,
+        description TEXT DEFAULT '',
+        welcome_channels TEXT DEFAULT '[]',
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+
       -- Trigger to auto-update search vector
       CREATE OR REPLACE FUNCTION messages_search_update() RETURNS trigger AS $$
       BEGIN
@@ -577,7 +621,7 @@ async function initialize() {
         id TEXT PRIMARY KEY, channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
         author_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
         content TEXT NOT NULL DEFAULT '',
-        type TEXT DEFAULT 'default' CHECK(type IN ('default','reply','system','pin')),
+        type TEXT DEFAULT 'default' CHECK(type IN ('default','reply','system','pin','poll')),
         reply_to_id TEXT REFERENCES messages(id) ON DELETE SET NULL,
         thread_id TEXT REFERENCES channels(id) ON DELETE SET NULL,
         pinned INTEGER DEFAULT 0, edited_at DATETIME DEFAULT NULL,
@@ -756,6 +800,31 @@ async function initialize() {
         UNIQUE(user_id, message_id)
       );
       CREATE INDEX IF NOT EXISTS idx_bookmarks_user ON bookmarks(user_id);
+      CREATE TABLE IF NOT EXISTS polls (
+        id TEXT PRIMARY KEY,
+        message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+        question TEXT NOT NULL,
+        allows_multiple INTEGER DEFAULT 0,
+        expires_at DATETIME DEFAULT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE INDEX IF NOT EXISTS idx_polls_message ON polls(message_id);
+      CREATE TABLE IF NOT EXISTS poll_options (
+        id TEXT PRIMARY KEY,
+        poll_id TEXT NOT NULL REFERENCES polls(id) ON DELETE CASCADE,
+        text TEXT NOT NULL,
+        position INTEGER DEFAULT 0
+      );
+      CREATE INDEX IF NOT EXISTS idx_poll_options_poll ON poll_options(poll_id);
+      CREATE TABLE IF NOT EXISTS poll_votes (
+        id TEXT PRIMARY KEY,
+        poll_id TEXT NOT NULL REFERENCES polls(id) ON DELETE CASCADE,
+        option_id TEXT NOT NULL REFERENCES poll_options(id) ON DELETE CASCADE,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(poll_id, option_id, user_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_poll_votes_poll ON poll_votes(poll_id);
       CREATE TABLE IF NOT EXISTS message_edits (
         id TEXT PRIMARY KEY,
         message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
@@ -780,6 +849,28 @@ async function initialize() {
       CREATE INDEX IF NOT EXISTS idx_channel_overwrites_channel ON channel_overwrites(channel_id);
       CREATE INDEX IF NOT EXISTS idx_messages_reply ON messages(reply_to_id);
       CREATE INDEX IF NOT EXISTS idx_server_members_server ON server_members(server_id);
+    `);
+
+    // User activities table
+    sqlite.exec(`
+      CREATE TABLE IF NOT EXISTS user_activities (
+        user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+        type TEXT NOT NULL CHECK(type IN ('playing','streaming','listening','watching','competing','custom')),
+        name TEXT NOT NULL DEFAULT '',
+        details TEXT DEFAULT '',
+        started_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    // Welcome screens table
+    sqlite.exec(`
+      CREATE TABLE IF NOT EXISTS welcome_screens (
+        server_id TEXT PRIMARY KEY REFERENCES servers(id) ON DELETE CASCADE,
+        enabled INTEGER DEFAULT 0,
+        description TEXT DEFAULT '',
+        welcome_channels TEXT DEFAULT '[]',
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
     `);
 
     // FTS5 virtual table for full-text search (separate exec because virtual tables don't support IF NOT EXISTS in all cases)
@@ -829,6 +920,70 @@ async function initialize() {
       `);
     } catch (e) {
       // Triggers may already exist
+    }
+
+    // Migrate messages type CHECK constraint to include 'poll'
+    try {
+      // Check if the current CHECK constraint allows 'poll' by looking at table SQL
+      const tableInfo = sqlite.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='messages'").get();
+      if (tableInfo && tableInfo.sql && !tableInfo.sql.includes("'poll'")) {
+        // Need to recreate the table with the updated CHECK constraint
+        sqlite.exec(`
+          PRAGMA foreign_keys = OFF;
+          CREATE TABLE messages_new (
+            id TEXT PRIMARY KEY, channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+            author_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            content TEXT NOT NULL DEFAULT '',
+            type TEXT DEFAULT 'default' CHECK(type IN ('default','reply','system','pin','poll')),
+            reply_to_id TEXT REFERENCES messages(id) ON DELETE SET NULL,
+            thread_id TEXT REFERENCES channels(id) ON DELETE SET NULL,
+            pinned INTEGER DEFAULT 0, edited_at DATETIME DEFAULT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+          );
+          INSERT INTO messages_new SELECT * FROM messages;
+          DROP TABLE messages;
+          ALTER TABLE messages_new RENAME TO messages;
+          CREATE INDEX IF NOT EXISTS idx_messages_channel ON messages(channel_id, created_at);
+          CREATE INDEX IF NOT EXISTS idx_messages_author ON messages(author_id);
+          CREATE INDEX IF NOT EXISTS idx_messages_reply ON messages(reply_to_id);
+          PRAGMA foreign_keys = ON;
+        `);
+      }
+    } catch (e) {
+      // Migration may not be needed or table already has correct constraint
+    }
+
+    // Add poll tables if they don't exist (migration for existing DBs)
+    try {
+      sqlite.exec(`
+        CREATE TABLE IF NOT EXISTS polls (
+          id TEXT PRIMARY KEY,
+          message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+          question TEXT NOT NULL,
+          allows_multiple INTEGER DEFAULT 0,
+          expires_at DATETIME DEFAULT NULL,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_polls_message ON polls(message_id);
+        CREATE TABLE IF NOT EXISTS poll_options (
+          id TEXT PRIMARY KEY,
+          poll_id TEXT NOT NULL REFERENCES polls(id) ON DELETE CASCADE,
+          text TEXT NOT NULL,
+          position INTEGER DEFAULT 0
+        );
+        CREATE INDEX IF NOT EXISTS idx_poll_options_poll ON poll_options(poll_id);
+        CREATE TABLE IF NOT EXISTS poll_votes (
+          id TEXT PRIMARY KEY,
+          poll_id TEXT NOT NULL REFERENCES polls(id) ON DELETE CASCADE,
+          option_id TEXT NOT NULL REFERENCES poll_options(id) ON DELETE CASCADE,
+          user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          UNIQUE(poll_id, option_id, user_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_poll_votes_poll ON poll_votes(poll_id);
+      `);
+    } catch (e) {
+      // Tables may already exist
     }
 
     // Migrate read_states table if it has old column names (last_message_id -> last_read_message_id)

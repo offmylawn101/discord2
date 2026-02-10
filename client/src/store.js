@@ -50,6 +50,9 @@ export const useStore = create((set, get) => ({
   // Friends
   relationships: [],
 
+  // Activities
+  userActivities: {}, // { userId: { type, name, details, started_at } }
+
   // Link embeds
   messageEmbeds: {}, // { messageId: [embeds] }
 
@@ -244,6 +247,26 @@ export const useStore = create((set, get) => ({
       console.error('Join discover server error:', err);
       throw err;
     }
+  },
+
+  // Welcome Screen
+  welcomeScreen: null,
+
+  fetchWelcomeScreen: async (serverId) => {
+    try {
+      const data = await api.get(`/servers/${serverId}/welcome`);
+      set({ welcomeScreen: data });
+      return data;
+    } catch {
+      set({ welcomeScreen: null });
+      return null;
+    }
+  },
+
+  updateWelcomeScreen: async (serverId, data) => {
+    const result = await api.put(`/servers/${serverId}/welcome`, data);
+    set({ welcomeScreen: result });
+    return result;
   },
 
   // Bookmarks
@@ -460,7 +483,14 @@ export const useStore = create((set, get) => ({
 
   selectServer: async (serverId) => {
     const data = await api.get(`/servers/${serverId}`);
-    set({
+    // Extract activity data from members
+    const activityUpdates = {};
+    for (const m of (data.members || [])) {
+      if (m.activity) {
+        activityUpdates[m.id] = m.activity;
+      }
+    }
+    set(s => ({
       currentServer: data,
       channels: data.channels || [],
       categories: data.categories || [],
@@ -468,7 +498,8 @@ export const useStore = create((set, get) => ({
       members: data.members || [],
       serverEmojis: data.emojis || [],
       currentDm: null,
-    });
+      userActivities: { ...s.userActivities, ...activityUpdates },
+    }));
     // Fetch server events
     api.get(`/servers/${serverId}/events`).then(events => {
       set({ serverEvents: events || [] });
@@ -959,6 +990,55 @@ export const useStore = create((set, get) => ({
     }));
   },
 
+  // Activity
+  setActivity: async (type, name, details) => {
+    try {
+      const result = await api.put('/auth/me/activity', { type, name, details });
+      const socket = getSocket();
+      socket?.emit('activity_update', result.activity);
+      set(s => {
+        const userActivities = { ...s.userActivities };
+        if (result.activity) {
+          userActivities[s.user.id] = result.activity;
+        } else {
+          delete userActivities[s.user.id];
+        }
+        return { userActivities };
+      });
+      return result.activity;
+    } catch (err) {
+      console.error('Set activity error:', err);
+      throw err;
+    }
+  },
+
+  clearActivity: async () => {
+    try {
+      await api.put('/auth/me/activity', {});
+      const socket = getSocket();
+      socket?.emit('activity_update', null);
+      set(s => {
+        const userActivities = { ...s.userActivities };
+        delete userActivities[s.user.id];
+        return { userActivities };
+      });
+    } catch (err) {
+      console.error('Clear activity error:', err);
+    }
+  },
+
+  updateUserActivity: (userId, activity) => {
+    set(s => {
+      const userActivities = { ...s.userActivities };
+      if (activity) {
+        userActivities[userId] = activity;
+      } else {
+        delete userActivities[userId];
+      }
+      return { userActivities };
+    });
+  },
+
   // Avatar upload
   uploadAvatar: async (file) => {
     const formData = new FormData();
@@ -1137,6 +1217,27 @@ export const useStore = create((set, get) => ({
     await api.delete(`/webhooks/${webhookId}`);
     set(s => ({
       webhooks: s.webhooks.filter(w => w.id !== webhookId),
+    }));
+  },
+
+  // Poll actions
+  createPoll: async (channelId, question, options, allowsMultiple) => {
+    const result = await api.post('/polls', { channelId, question, options, allowsMultiple });
+    // Add the message to local state
+    get().addMessage(result);
+    return result;
+  },
+
+  votePoll: async (pollId, optionId) => {
+    const result = await api.post(`/polls/${pollId}/vote`, { optionId });
+    return result;
+  },
+
+  updatePollInMessage: (messageId, poll) => {
+    set(s => ({
+      messages: s.messages.map(m =>
+        m.id === messageId ? { ...m, poll } : m
+      ),
     }));
   },
 

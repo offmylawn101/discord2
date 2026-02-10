@@ -148,6 +148,7 @@ export default function ServerSettings() {
           <button className={`settings-nav-item ${tab === 'automod' ? 'active' : ''}`} onClick={() => setTab('automod')}>AutoMod</button>
           <button className={`settings-nav-item ${tab === 'audit' ? 'active' : ''}`} onClick={() => setTab('audit')}>Audit Log</button>
           <button className={`settings-nav-item ${tab === 'statistics' ? 'active' : ''}`} onClick={() => setTab('statistics')}>Statistics</button>
+          <button className={`settings-nav-item ${tab === 'welcome' ? 'active' : ''}`} onClick={() => setTab('welcome')}>Welcome Screen</button>
         </div>
       </div>
 
@@ -496,8 +497,209 @@ export default function ServerSettings() {
             ) : null}
           </>
         )}
+
+        {tab === 'welcome' && <ServerWelcomeScreen />}
       </div>
     </div>
+  );
+}
+
+function ServerWelcomeScreen() {
+  const { currentServer, channels, fetchWelcomeScreen, updateWelcomeScreen, welcomeScreen } = useStore();
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [enabled, setEnabled] = useState(false);
+  const [description, setDescription] = useState('');
+  const [welcomeChannels, setWelcomeChannels] = useState([]);
+  const [addChannelId, setAddChannelId] = useState('');
+
+  const textChannels = channels.filter(c => c.type === 'text' || c.type === 'announcement');
+
+  React.useEffect(() => {
+    if (currentServer?.id) {
+      setLoading(true);
+      fetchWelcomeScreen(currentServer.id).then(data => {
+        if (data) {
+          setEnabled(!!data.enabled);
+          setDescription(data.description || '');
+          setWelcomeChannels(data.welcome_channels || []);
+        }
+        setLoading(false);
+      }).catch(() => setLoading(false));
+    }
+  }, [currentServer?.id]);
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      await updateWelcomeScreen(currentServer.id, {
+        enabled,
+        description,
+        channels: welcomeChannels,
+      });
+    } catch (err) {
+      console.error('Save welcome screen error:', err);
+    }
+    setSaving(false);
+  };
+
+  const handleAddChannel = () => {
+    if (!addChannelId) return;
+    if (welcomeChannels.some(wc => wc.channelId === addChannelId)) return;
+    setWelcomeChannels([...welcomeChannels, { channelId: addChannelId, description: '', emoji: '' }]);
+    setAddChannelId('');
+  };
+
+  const handleRemoveChannel = (channelId) => {
+    setWelcomeChannels(welcomeChannels.filter(wc => wc.channelId !== channelId));
+  };
+
+  const handleUpdateChannel = (channelId, field, value) => {
+    setWelcomeChannels(welcomeChannels.map(wc =>
+      wc.channelId === channelId ? { ...wc, [field]: value } : wc
+    ));
+  };
+
+  if (loading) {
+    return <div style={{ color: 'var(--text-muted)', padding: 20 }}>Loading welcome screen...</div>;
+  }
+
+  return (
+    <>
+      <div className="settings-title">Welcome Screen</div>
+      <p style={{ color: 'var(--text-muted)', fontSize: 14, marginBottom: 20 }}>
+        Configure a welcome screen to greet new members when they join the server.
+      </p>
+
+      {/* Enable toggle */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
+        <label style={{ fontSize: 14, fontWeight: 600, color: 'var(--header-primary)' }}>
+          Enable Welcome Screen
+        </label>
+        <div
+          onClick={() => setEnabled(!enabled)}
+          style={{
+            width: 44, height: 24, borderRadius: 12, cursor: 'pointer',
+            background: enabled ? 'var(--green-360)' : 'var(--bg-tertiary)',
+            position: 'relative', transition: 'background 0.2s',
+          }}
+        >
+          <div style={{
+            width: 18, height: 18, borderRadius: '50%', background: 'white',
+            position: 'absolute', top: 3,
+            left: enabled ? 23 : 3, transition: 'left 0.2s',
+          }} />
+        </div>
+      </div>
+
+      {/* Description */}
+      <div className="form-group" style={{ marginBottom: 20 }}>
+        <label className="form-label">Server Description</label>
+        <textarea
+          className="form-input"
+          value={description}
+          onChange={e => setDescription(e.target.value)}
+          placeholder="Welcome to our server! Here are some channels to get you started."
+          maxLength={500}
+          rows={3}
+          style={{ resize: 'vertical', minHeight: 60 }}
+        />
+        <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4, textAlign: 'right' }}>
+          {description.length}/500
+        </div>
+      </div>
+
+      {/* Welcome Channels */}
+      <div style={{ marginBottom: 20 }}>
+        <label className="form-label">Recommended Channels</label>
+        <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+          <select
+            className="form-input"
+            value={addChannelId}
+            onChange={e => setAddChannelId(e.target.value)}
+            style={{ flex: 1 }}
+          >
+            <option value="">Select a channel...</option>
+            {textChannels
+              .filter(c => !welcomeChannels.some(wc => wc.channelId === c.id))
+              .map(c => (
+                <option key={c.id} value={c.id}>#{c.name}</option>
+              ))
+            }
+          </select>
+          <button
+            className="btn btn-primary"
+            onClick={handleAddChannel}
+            disabled={!addChannelId}
+            style={{ flexShrink: 0 }}
+          >
+            Add
+          </button>
+        </div>
+
+        {welcomeChannels.length === 0 ? (
+          <div style={{ color: 'var(--text-muted)', padding: 16, textAlign: 'center', background: 'var(--bg-secondary)', borderRadius: 8 }}>
+            No channels added yet. Add channels above to show them on the welcome screen.
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {welcomeChannels.map((wc, i) => {
+              const channel = textChannels.find(c => c.id === wc.channelId);
+              return (
+                <div key={wc.channelId} style={{
+                  background: 'var(--bg-secondary)', borderRadius: 8, padding: 12,
+                  display: 'flex', flexDirection: 'column', gap: 8,
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ fontWeight: 600, color: 'var(--header-primary)', flex: 1 }}>
+                      #{channel?.name || 'Unknown channel'}
+                    </span>
+                    <button
+                      onClick={() => handleRemoveChannel(wc.channelId)}
+                      style={{
+                        background: 'transparent', border: 'none', color: 'var(--red-400)',
+                        cursor: 'pointer', fontSize: 18, padding: '0 4px', lineHeight: 1,
+                      }}
+                      title="Remove channel"
+                    >
+                      x
+                    </button>
+                  </div>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <input
+                      className="form-input"
+                      value={wc.emoji}
+                      onChange={e => handleUpdateChannel(wc.channelId, 'emoji', e.target.value)}
+                      placeholder="Emoji"
+                      style={{ width: 60, textAlign: 'center' }}
+                      maxLength={4}
+                    />
+                    <input
+                      className="form-input"
+                      value={wc.description}
+                      onChange={e => handleUpdateChannel(wc.channelId, 'description', e.target.value)}
+                      placeholder="Channel description for welcome screen"
+                      style={{ flex: 1 }}
+                      maxLength={200}
+                    />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* Save button */}
+      <button
+        className="btn btn-primary"
+        onClick={handleSave}
+        disabled={saving}
+        style={{ marginTop: 8 }}
+      >
+        {saving ? 'Saving...' : 'Save Changes'}
+      </button>
+    </>
   );
 }
 
