@@ -52,6 +52,21 @@ export default function MainLayout() {
     return () => socket.off('missed_messages', handleMissedMessages);
   }, []);
 
+  // Listen for nickname updates
+  useEffect(() => {
+    const socket = getSocket();
+    if (!socket) return;
+
+    const handleNicknameUpdate = ({ userId, nickname }) => {
+      useStore.setState(s => ({
+        members: s.members.map(m => m.id === userId ? { ...m, nickname } : m),
+      }));
+    };
+
+    socket.on('nickname_update', handleNicknameUpdate);
+    return () => socket.off('nickname_update', handleNicknameUpdate);
+  }, []);
+
   // Parse route: /channels/@me or /channels/:serverId/:channelId
   const path = window.location.pathname;
   const parts = path.split('/').filter(Boolean); // ['channels', ...rest]
