@@ -363,6 +363,17 @@ async function initialize() {
       ALTER TABLE messages ADD COLUMN IF NOT EXISTS search_vector tsvector;
       CREATE INDEX IF NOT EXISTS idx_messages_search ON messages USING GIN(search_vector);
 
+      CREATE TABLE IF NOT EXISTS server_emojis (
+        id TEXT PRIMARY KEY,
+        server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        image_url TEXT NOT NULL,
+        uploader_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        animated INTEGER DEFAULT 0,
+        created_at TIMESTAMP DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_server_emojis_server ON server_emojis(server_id);
+
       -- Trigger to auto-update search vector
       CREATE OR REPLACE FUNCTION messages_search_update() RETURNS trigger AS $$
       BEGIN
@@ -520,6 +531,16 @@ async function initialize() {
       );
       CREATE INDEX IF NOT EXISTS idx_threads_channel ON threads(channel_id);
       CREATE INDEX IF NOT EXISTS idx_threads_parent ON threads(parent_message_id);
+      CREATE TABLE IF NOT EXISTS server_emojis (
+        id TEXT PRIMARY KEY,
+        server_id TEXT NOT NULL REFERENCES servers(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        image_url TEXT NOT NULL,
+        uploader_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        animated INTEGER DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE INDEX IF NOT EXISTS idx_server_emojis_server ON server_emojis(server_id);
       CREATE INDEX IF NOT EXISTS idx_messages_channel ON messages(channel_id, created_at);
       CREATE INDEX IF NOT EXISTS idx_messages_author ON messages(author_id);
       CREATE INDEX IF NOT EXISTS idx_server_members_user ON server_members(user_id);
