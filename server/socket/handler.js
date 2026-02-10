@@ -59,6 +59,17 @@ function setupSocketHandlers(io) {
     socket.on('message_create', async (message) => {
       // Look up server_id for the channel
       const channel = await db.get('SELECT server_id FROM channels WHERE id = ?', [message.channel_id]);
+
+      // Auto-un-idle on message send
+      const currentUser = await db.get('SELECT status FROM users WHERE id = ?', [userId]);
+      if (currentUser?.status === 'idle') {
+        await db.run('UPDATE users SET status = ? WHERE id = ?', ['online', userId]);
+        const srvs = await db.all('SELECT server_id FROM server_members WHERE user_id = ?', [userId]);
+        for (const s of srvs) {
+          io.to(`server:${s.server_id}`).emit('presence_update', { userId, status: 'online' });
+        }
+      }
+
       const enrichedMessage = { ...message, server_id: channel?.server_id || null };
 
       // Broadcast to channel
