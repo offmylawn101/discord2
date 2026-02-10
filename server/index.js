@@ -25,6 +25,7 @@ const automodRoutes = require('./routes/automod');
 const webhookRoutes = require('./routes/webhooks');
 const discoverRoutes = require('./routes/discover');
 const notificationRoutes = require('./routes/notifications');
+const folderRoutes = require('./routes/folders');
 
 const app = express();
 const server = http.createServer(app);
@@ -99,6 +100,7 @@ app.use('/api/webhooks', webhookRoutes);  // Webhook execution is public (no aut
 app.use('/api', webhookRoutes);          // For /api/servers/:serverId/webhooks and /api/channels/:channelId/webhooks
 app.use('/api/discover', discoverRoutes);
 app.use('/api/notifications', authenticate, notificationRoutes);
+app.use('/api/folders', authenticate, folderRoutes);
 
 // Users search
 const db = require('./models/database');

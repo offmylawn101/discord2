@@ -4,6 +4,7 @@ const multer = require('multer');
 const path = require('path');
 const db = require('../models/database');
 const { authenticate } = require('../middleware/auth');
+const { searchLimiter } = require('../middleware/rateLimit');
 const { PERMISSIONS, DEFAULT_PERMISSIONS, checkPermission } = require('../utils/permissions');
 const cache = require('../utils/cache');
 const { logAudit, AUDIT_ACTIONS } = require('../utils/auditLog');
@@ -271,116 +272,81 @@ router.delete('/:serverId/members/@me', authenticate, async (req, res) => {
 });
 
 // Server-wide message search
-router.get('/:serverId/search', authenticate, async (req, res) => {
+router.get('/:serverId/search', authenticate, searchLimiter, async (req, res) => {
   try {
     const { serverId } = req.params;
-    const { q, channel_id, author_id, has, before, after, limit = 25 } = req.query;
-    if (!q) return res.json({ messages: [], total: 0 });
+    const { q, from, has, before, after, in: inChannel, limit = 25, offset = 0 } = req.query;
+    if (!q && !from && !has) return res.json({ messages: [], total: 0, offset: 0, limit: 25 });
 
     // Verify membership
     const member = await db.get('SELECT 1 FROM server_members WHERE server_id = ? AND user_id = ?', [serverId, req.userId]);
     if (!member) return res.status(403).json({ error: 'Not a member' });
 
     const searchLimit = Math.min(parseInt(limit) || 25, 50);
-    let messages;
+    const searchOffset = parseInt(offset) || 0;
 
-    if (db.isPg) {
-      const tsquery = q.split(/\s+/).filter(Boolean).join(' & ');
-      let pgSql = `
-        SELECT m.*, u.username, u.discriminator, u.avatar, c.name as channel_name,
-          ts_rank(m.search_vector, to_tsquery('english', $1)) as rank
-        FROM messages m
-        INNER JOIN users u ON u.id = m.author_id
-        INNER JOIN channels c ON c.id = m.channel_id
-        WHERE c.server_id = $2 AND m.search_vector @@ to_tsquery('english', $1)
-      `;
-      const params = [tsquery, serverId];
-      let paramIdx = 3;
+    let conditions = ['c.server_id = ?'];
+    let params = [serverId];
 
-      if (channel_id) {
-        pgSql += ` AND m.channel_id = $${paramIdx}`;
-        params.push(channel_id);
-        paramIdx++;
-      }
-      if (author_id) {
-        pgSql += ` AND m.author_id = $${paramIdx}`;
-        params.push(author_id);
-        paramIdx++;
-      }
-      if (has === 'link') pgSql += ` AND m.content LIKE '%http%'`;
-      if (has === 'file') pgSql += ` AND EXISTS (SELECT 1 FROM attachments a WHERE a.message_id = m.id)`;
-      if (before) {
-        pgSql += ` AND m.created_at < $${paramIdx}`;
-        params.push(before);
-        paramIdx++;
-      }
-      if (after) {
-        pgSql += ` AND m.created_at > $${paramIdx}`;
-        params.push(after);
-        paramIdx++;
-      }
-
-      pgSql += ` ORDER BY rank DESC, m.created_at DESC LIMIT $${paramIdx}`;
-      params.push(searchLimit);
-
-      messages = await db.all(pgSql, params);
-    } else {
-      // SQLite with FTS5
-      let sql = `
-        SELECT m.*, u.username, u.discriminator, u.avatar, c.name as channel_name
-        FROM messages m
-        INNER JOIN users u ON u.id = m.author_id
-        INNER JOIN channels c ON c.id = m.channel_id
-        INNER JOIN messages_fts fts ON fts.rowid = m.rowid
-        WHERE c.server_id = ? AND messages_fts MATCH ?
-      `;
-      const params = [serverId, q];
-
-      if (channel_id) {
-        sql += ' AND m.channel_id = ?';
-        params.push(channel_id);
-      }
-      if (author_id) {
-        sql += ' AND m.author_id = ?';
-        params.push(author_id);
-      }
-      if (has === 'link') sql += ` AND m.content LIKE '%http%'`;
-      if (has === 'file') sql += ` AND EXISTS (SELECT 1 FROM attachments a WHERE a.message_id = m.id)`;
-      if (before) {
-        sql += ' AND m.created_at < ?';
-        params.push(before);
-      }
-      if (after) {
-        sql += ' AND m.created_at > ?';
-        params.push(after);
-      }
-
-      sql += ' ORDER BY m.created_at DESC LIMIT ?';
-      params.push(searchLimit);
-
-      messages = await db.all(sql, params);
+    // Text search
+    if (q) {
+      conditions.push('m.content LIKE ?');
+      params.push(`%${q}%`);
     }
 
-    res.json({ messages, total: messages.length });
+    // From user filter
+    if (from) {
+      conditions.push('m.author_id = ?');
+      params.push(from);
+    }
+
+    // Has filter (file, image, link)
+    if (has === 'file' || has === 'image') {
+      conditions.push("m.attachments IS NOT NULL AND m.attachments != '[]'");
+    } else if (has === 'link') {
+      conditions.push("m.content LIKE '%http%'");
+    }
+
+    // Date filters
+    if (before) {
+      conditions.push('m.created_at < ?');
+      params.push(before);
+    }
+    if (after) {
+      conditions.push('m.created_at > ?');
+      params.push(after);
+    }
+
+    // Channel filter
+    if (inChannel) {
+      conditions.push('m.channel_id = ?');
+      params.push(inChannel);
+    }
+
+    const whereClause = conditions.join(' AND ');
+
+    // Get total count
+    const countResult = await db.get(`
+      SELECT COUNT(*) as total FROM messages m
+      INNER JOIN channels c ON c.id = m.channel_id
+      WHERE ${whereClause}
+    `, params);
+
+    // Get results
+    const messages = await db.all(`
+      SELECT m.*, u.username, u.avatar, c.name as channel_name
+      FROM messages m
+      INNER JOIN users u ON u.id = m.author_id
+      INNER JOIN channels c ON c.id = m.channel_id
+      WHERE ${whereClause}
+      ORDER BY m.created_at DESC
+      LIMIT ? OFFSET ?
+    `, [...params, searchLimit, searchOffset]);
+
+    res.json({ messages, total: countResult.total, offset: searchOffset, limit: searchLimit });
   } catch (err) {
     console.error('Server search error:', err);
-    // Fallback to LIKE
-    try {
-      const { serverId } = req.params;
-      const { q, limit = 25 } = req.query;
-      const searchLimit = Math.min(parseInt(limit) || 25, 50);
-      const messages = await db.all(`
-        SELECT m.*, u.username, u.discriminator, u.avatar, c.name as channel_name
-        FROM messages m
-        INNER JOIN users u ON u.id = m.author_id
-        INNER JOIN channels c ON c.id = m.channel_id
-        WHERE c.server_id = ? AND m.content LIKE ?
-        ORDER BY m.created_at DESC LIMIT ?
-      `, [serverId, `%${q}%`, searchLimit]);
-      res.json({ messages, total: messages.length });
-    } catch (fallbackErr) {
-      res.status(500).json({ error: 'Search failed' });
-    }
+    res.status(500).json({ error: 'Search failed' });
   }
 });
 
@@ -676,6 +642,42 @@ router.delete('/:serverId/emojis/:emojiId', authenticate, async (req, res) => {
     res.json({ deleted: true });
   } catch (err) {
     console.error('Delete emoji error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Reorder categories
+router.patch('/:serverId/categories/reorder', authenticate, async (req, res) => {
+  try {
+    const { serverId } = req.params;
+    const { categories } = req.body; // [{ id, position }]
+
+    if (!Array.isArray(categories)) {
+      return res.status(400).json({ error: 'categories must be an array' });
+    }
+
+    const server = await db.get('SELECT owner_id FROM servers WHERE id = ?', [serverId]);
+    if (!server) return res.status(404).json({ error: 'Server not found' });
+
+    if (server.owner_id !== req.userId) {
+      if (!await checkPermission(db, req.userId, serverId, null, PERMISSIONS.MANAGE_CHANNELS)) {
+        return res.status(403).json({ error: 'Missing MANAGE_CHANNELS permission' });
+      }
+    }
+
+    for (const cat of categories) {
+      await db.run('UPDATE channel_categories SET position = ? WHERE id = ? AND server_id = ?', [cat.position, cat.id, serverId]);
+    }
+
+    const updated = await db.all('SELECT * FROM channel_categories WHERE server_id = ? ORDER BY position', [serverId]);
+    await cache.del(`server:${serverId}:detail`);
+
+    const io = req.app.get('io');
+    if (io) io.to(`server:${serverId}`).emit('categories_reorder', updated);
+
+    res.json(updated);
+  } catch (err) {
+    console.error('Reorder categories error:', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });

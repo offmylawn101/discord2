@@ -41,6 +41,7 @@ export const useStore = create((set, get) => ({
   voiceChannel: null,
   voiceParticipants: [],
   voiceState: { selfMute: false, selfDeaf: false },
+  voiceUsers: {}, // { channelId: [{ user_id, username, avatar, self_mute, self_deaf }] }
 
   // Quick Switcher
   recentChannels: [],
@@ -200,6 +201,10 @@ export const useStore = create((set, get) => ({
     }
   },
 
+  // Search
+  showSearchPanel: false,
+  toggleSearchPanel: () => set(s => ({ showSearchPanel: !s.showSearchPanel })),
+
   // UI
   showSettings: false,
   showServerSettings: false,
@@ -315,6 +320,49 @@ export const useStore = create((set, get) => ({
     return 'all'; // Default behavior: notify for all messages
   },
 
+  // Server Folders
+  serverFolders: [],
+
+  fetchFolders: async () => {
+    try {
+      const folders = await api.get('/folders');
+      set({ serverFolders: folders || [] });
+    } catch {}
+  },
+
+  createFolder: async (name, color, serverIds) => {
+    const folder = await api.post('/folders', { name, color, server_ids: serverIds });
+    set(s => ({ serverFolders: [...s.serverFolders, folder] }));
+    return folder;
+  },
+
+  updateFolder: async (folderId, data) => {
+    const folder = await api.patch(`/folders/${folderId}`, data);
+    set(s => ({ serverFolders: s.serverFolders.map(f => f.id === folderId ? folder : f) }));
+    return folder;
+  },
+
+  deleteFolder: async (folderId) => {
+    await api.delete(`/folders/${folderId}`);
+    set(s => ({ serverFolders: s.serverFolders.filter(f => f.id !== folderId) }));
+  },
+
+  addServerToFolder: async (folderId, serverId) => {
+    const state = get();
+    const folder = state.serverFolders.find(f => f.id === folderId);
+    if (!folder || folder.server_ids.includes(serverId)) return;
+    const newIds = [...folder.server_ids, serverId];
+    return get().updateFolder(folderId, { server_ids: newIds });
+  },
+
+  removeServerFromFolder: async (folderId, serverId) => {
+    const state = get();
+    const folder = state.serverFolders.find(f => f.id === folderId);
+    if (!folder) return;
+    const newIds = folder.server_ids.filter(id => id !== serverId);
+    return get().updateFolder(folderId, { server_ids: newIds });
+  },
+
   // Auth actions
   setUser: (user) => set({ user }),
   setToken: (token) => {
@@ -428,6 +476,25 @@ export const useStore = create((set, get) => ({
       // Revert on error by re-fetching
       const data = await api.get(`/servers/${serverId}`);
       set({ channels: data.channels || [] });
+    }
+  },
+
+  reorderCategories: async (serverId, categoryUpdates) => {
+    // Optimistically update local state
+    set(s => {
+      const categories = s.categories.map(cat => {
+        const update = categoryUpdates.find(u => u.id === cat.id);
+        return update ? { ...cat, position: update.position } : cat;
+      });
+      return { categories };
+    });
+    try {
+      const updated = await api.patch(`/servers/${serverId}/categories/reorder`, { categories: categoryUpdates });
+      set({ categories: updated });
+    } catch (err) {
+      // Revert on error by re-fetching
+      const data = await api.get(`/servers/${serverId}`);
+      set({ categories: data.categories || [] });
     }
   },
 
@@ -701,6 +768,55 @@ export const useStore = create((set, get) => ({
   setVoiceChannel: (channel) => set({ voiceChannel: channel }),
   setVoiceParticipants: (participants) => set({ voiceParticipants: participants }),
   setVoiceState: (state) => set(s => ({ voiceState: { ...s.voiceState, ...state } })),
+
+  fetchVoiceStates: async (channelId) => {
+    try {
+      const states = await api.get(`/channels/${channelId}/voice-states`);
+      set(s => ({ voiceUsers: { ...s.voiceUsers, [channelId]: states } }));
+    } catch {}
+  },
+
+  joinVoice: (channelId) => {
+    const socket = getSocket();
+    const state = get();
+    if (!socket || !state.currentServer) return;
+
+    // Leave current voice channel first
+    if (state.voiceChannel) {
+      socket.emit('voice_leave', { channelId: state.voiceChannel.id });
+    }
+
+    const channel = state.channels.find(c => c.id === channelId);
+    socket.emit('voice_join', { channelId, serverId: state.currentServer.id });
+    set({ voiceChannel: channel, voiceState: { selfMute: false, selfDeaf: false } });
+  },
+
+  leaveVoice: () => {
+    const socket = getSocket();
+    const state = get();
+    if (!socket || !state.voiceChannel) return;
+    socket.emit('voice_leave', { channelId: state.voiceChannel.id });
+    set({ voiceChannel: null, voiceParticipants: [], voiceState: { selfMute: false, selfDeaf: false } });
+  },
+
+  toggleMute: () => {
+    const socket = getSocket();
+    const state = get();
+    if (!socket || !state.voiceChannel) return;
+    const newMute = !state.voiceState.selfMute;
+    socket.emit('voice_state', { channelId: state.voiceChannel.id, selfMute: newMute, selfDeaf: state.voiceState.selfDeaf });
+    set({ voiceState: { ...state.voiceState, selfMute: newMute } });
+  },
+
+  toggleDeafen: () => {
+    const socket = getSocket();
+    const state = get();
+    if (!socket || !state.voiceChannel) return;
+    const newDeaf = !state.voiceState.selfDeaf;
+    const newMute = newDeaf ? true : state.voiceState.selfMute;
+    socket.emit('voice_state', { channelId: state.voiceChannel.id, selfMute: newMute, selfDeaf: newDeaf });
+    set({ voiceState: { selfMute: newMute, selfDeaf: newDeaf } });
+  },
 
   // Role actions
   createRole: async (serverId, data) => {

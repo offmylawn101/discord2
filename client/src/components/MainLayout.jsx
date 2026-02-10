@@ -19,16 +19,18 @@ import QuickSwitcher from './QuickSwitcher';
 import ChannelSettings from './ChannelSettings';
 import EventsPanel from './EventsPanel';
 import ServerDiscovery from './ServerDiscovery';
+import SearchPanel from './SearchPanel';
 
 export default function MainLayout() {
   const {
     currentServer, currentChannel, fetchServers, selectServer,
     showCreateServer, showInviteModal, showServerSettings, showSettings,
     showQuickSwitcher, toggleQuickSwitcher,
-    fetchDms, fetchRelationships, setConnectionState,
+    fetchDms, fetchRelationships, setConnectionState, fetchFolders,
   } = useStore();
   const connectionState = useStore(s => s.connectionState);
   const activeThread = useStore(s => s.activeThread);
+  const showSearchPanel = useStore(s => s.showSearchPanel);
   const showEventsPanel = useStore(s => s.showEventsPanel);
   const showDiscover = useStore(s => s.showDiscover);
   const navigate = useNavigate();
@@ -133,6 +135,7 @@ export default function MainLayout() {
     fetchDms();
     fetchRelationships();
     fetchNotificationSettings();
+    fetchFolders();
   }, []);
 
   // Request notification permission on mount
@@ -200,8 +203,9 @@ export default function MainLayout() {
           ) : currentChannel ? (
             <>
               <ChatArea />
-              {activeThread && <ThreadPanel />}
-              {showMemberList && !activeThread && <MemberList />}
+              {showSearchPanel && <SearchPanel onClose={() => useStore.setState({ showSearchPanel: false })} />}
+              {activeThread && !showSearchPanel && <ThreadPanel />}
+              {showMemberList && !activeThread && !showSearchPanel && <MemberList />}
             </>
           ) : (
             <div className="main-content">

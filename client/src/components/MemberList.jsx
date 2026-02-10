@@ -1,8 +1,10 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useStore } from '../store';
+import UserProfilePopup from './UserProfilePopup';
 
 export default function MemberList() {
-  const { members, roles, openDm, user } = useStore();
+  const { members, roles, user } = useStore();
+  const [profilePopup, setProfilePopup] = useState(null);
 
   // Group members by online/offline and roles
   const onlineMembers = members.filter(m => m.status !== 'offline');
@@ -39,7 +41,7 @@ export default function MemberList() {
               {role.name} — {group.members.length}
             </div>
             {group.members.map(m => (
-              <MemberItem key={m.id} member={m} role={role} onDm={() => m.id !== user.id && openDm(m.id)} />
+              <MemberItem key={m.id} member={m} role={role} onShowProfile={(e) => setProfilePopup({ userId: m.id, x: e.clientX, y: e.clientY })} />
             ))}
           </div>
         );
@@ -50,7 +52,7 @@ export default function MemberList() {
         <>
           <div className="member-category">Online — {ungrouped.length}</div>
           {ungrouped.map(m => (
-            <MemberItem key={m.id} member={m} onDm={() => m.id !== user.id && openDm(m.id)} />
+            <MemberItem key={m.id} member={m} onShowProfile={(e) => setProfilePopup({ userId: m.id, x: e.clientX, y: e.clientY })} />
           ))}
         </>
       )}
@@ -60,20 +62,27 @@ export default function MemberList() {
         <>
           <div className="member-category">Offline — {offlineMembers.length}</div>
           {offlineMembers.map(m => (
-            <MemberItem key={m.id} member={m} onDm={() => m.id !== user.id && openDm(m.id)} />
+            <MemberItem key={m.id} member={m} onShowProfile={(e) => setProfilePopup({ userId: m.id, x: e.clientX, y: e.clientY })} />
           ))}
         </>
+      )}
+      {profilePopup && (
+        <UserProfilePopup
+          userId={profilePopup.userId}
+          position={{ x: profilePopup.x, y: profilePopup.y }}
+          onClose={() => setProfilePopup(null)}
+        />
       )}
     </div>
   );
 }
 
-function MemberItem({ member, role, onDm }) {
+function MemberItem({ member, role, onShowProfile }) {
   const avatarColor = `hsl(${(member.id || '').split('').reduce((a, c) => a + c.charCodeAt(0), 0) % 360}, 60%, 50%)`;
   const nameColor = role?.color !== '#99AAB5' ? role?.color : undefined;
 
   return (
-    <div className="member-item" onClick={onDm}>
+    <div className="member-item" onClick={onShowProfile}>
       <div className="member-avatar" style={{ background: avatarColor }}>
         {member.avatar ? (
           <img src={member.avatar} alt="" style={{ width: '100%', height: '100%', borderRadius: '50%' }} />

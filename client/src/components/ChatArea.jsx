@@ -12,7 +12,7 @@ export default function ChatArea() {
     replyingTo, setReplyingTo, user, typingUsers, toggleInviteModal,
     members, bulkSelectMode, selectedMessages, toggleBulkSelect,
     toggleMessageSelect, selectAllMessages, clearSelection, bulkDeleteMessages,
-    removeBulkMessages, currentServer,
+    removeBulkMessages, currentServer, toggleSearchPanel,
   } = useStore();
   const [content, setContent] = useState('');
   const [files, setFiles] = useState([]);
@@ -617,6 +617,13 @@ export default function ChatArea() {
               if (el) el.style.display = el.style.display === 'none' ? '' : 'none';
             }} title="Member List">
               👥
+            </div>
+          )}
+          {currentChannel?.server_id && (
+            <div className="header-icon" onClick={toggleSearchPanel} title="Search">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                <path d="M21.707 20.293l-5.395-5.396A7.946 7.946 0 0018 10c0-4.411-3.589-8-8-8s-8 3.589-8 8 3.589 8 8 8a7.946 7.946 0 004.897-1.688l5.396 5.395a.997.997 0 001.414 0 .999.999 0 000-1.414zM10 16c-3.309 0-6-2.691-6-6s2.691-6 6-6 6 2.691 6 6-2.691 6-6 6z"/>
+              </svg>
             </div>
           )}
           <SearchBar />

@@ -249,4 +249,20 @@ router.delete('/channels/:channelId/overwrites/:targetId', authenticate, async (
   }
 });
 
+// Get current voice participants for a channel
+router.get('/channels/:channelId/voice-states', authenticate, async (req, res) => {
+  try {
+    const states = await db.all(`
+      SELECT vs.*, u.username, u.avatar, u.status
+      FROM voice_states vs
+      INNER JOIN users u ON u.id = vs.user_id
+      WHERE vs.channel_id = ?
+    `, [req.params.channelId]);
+    res.json(states);
+  } catch (err) {
+    console.error('Get voice states error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 module.exports = router;

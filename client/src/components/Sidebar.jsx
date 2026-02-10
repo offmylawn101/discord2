@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useStore } from '../store';
 import { getSocket } from '../utils/socket';
 import { PERMISSIONS, hasPermission } from '../utils/permissions';
-import VoicePanel from './VoicePanel';
+import VoicePanel, { MicOffSmall, HeadphoneOffSmall } from './VoicePanel';
 import StatusPicker from './StatusPicker';
 
 // Bell-slash SVG icon for muted indicator
@@ -24,16 +24,46 @@ export default function Sidebar({ isHome }) {
     user, currentServer, channels, categories, currentChannel,
     dmChannels, currentDm, selectChannel, selectDm,
     toggleServerSettings, toggleSettings, logout,
-    voiceChannel, unreadChannels, reorderChannels,
+    voiceChannel, unreadChannels, reorderChannels, reorderCategories,
+    voiceUsers, joinVoice, fetchVoiceStates,
+    members, roles,
   } = useStore();
   const navigate = useNavigate();
   const [collapsedCategories, setCollapsedCategories] = useState({});
   const [showStatusPicker, setShowStatusPicker] = useState(false);
-  const [dragChannelId, setDragChannelId] = useState(null);
-  const [dropTarget, setDropTarget] = useState(null); // { id, position: 'above' | 'below' }
+  const [draggedItem, setDraggedItem] = useState(null); // { id, type: 'channel'|'category', categoryId }
+  const [dropTarget, setDropTarget] = useState(null); // { id, position: 'before'|'after', type: 'channel'|'category', categoryId }
 
   // Server notification context menu state
   const [serverContextMenu, setServerContextMenu] = useState(null); // { x, y }
+
+  // Permission check: can user manage channels?
+  const canManageChannels = (() => {
+    if (!currentServer || !user) return false;
+    if (currentServer.owner_id === user.id) return true;
+    const memberEntry = members?.find(m => m.id === user.id);
+    if (!memberEntry?.roles) return false;
+    const MANAGE_CHANNELS = 1n << 4n;
+    const ADMINISTRATOR = 1n << 3n;
+    for (const roleId of memberEntry.roles) {
+      const role = roles.find(r => r.id === roleId);
+      if (!role) continue;
+      const perms = BigInt(role.permissions || 0);
+      if (perms & ADMINISTRATOR || perms & MANAGE_CHANNELS) return true;
+    }
+    return false;
+  })();
+
+  // Listen for categories_reorder socket events
+  useEffect(() => {
+    const socket = getSocket();
+    if (!socket || !currentServer) return;
+    const handleCategoriesReorder = (updated) => {
+      useStore.setState({ categories: updated });
+    };
+    socket.on('categories_reorder', handleCategoriesReorder);
+    return () => socket.off('categories_reorder', handleCategoriesReorder);
+  }, [currentServer?.id]);
 
   const toggleCategory = (id) => {
     setCollapsedCategories(prev => ({ ...prev, [id]: !prev[id] }));
@@ -47,62 +77,115 @@ export default function Sidebar({ isHome }) {
     offline: 'var(--text-muted)',
   }[user?.status || 'online'];
 
-  // Drag handlers
-  const handleDragStart = (e, channel) => {
-    setDragChannelId(channel.id);
+  // Channel drag handlers
+  const handleChannelDragStart = (e, channel) => {
+    if (!canManageChannels) { e.preventDefault(); return; }
     e.dataTransfer.effectAllowed = 'move';
     e.dataTransfer.setData('text/plain', channel.id);
+    setDraggedItem({ id: channel.id, type: 'channel', categoryId: channel.category_id });
   };
 
-  const handleDragOver = (e, channel) => {
+  const handleChannelDragOver = (e, channel) => {
     e.preventDefault();
+    if (!draggedItem || draggedItem.type !== 'channel') return;
+    if (channel.id === draggedItem.id) return;
     e.dataTransfer.dropEffect = 'move';
-    if (channel.id === dragChannelId) return;
     const rect = e.currentTarget.getBoundingClientRect();
-    const midY = rect.top + rect.height / 2;
-    const position = e.clientY < midY ? 'above' : 'below';
-    setDropTarget({ id: channel.id, position });
+    const mid = rect.top + rect.height / 2;
+    const position = e.clientY < mid ? 'before' : 'after';
+    setDropTarget({ id: channel.id, position, type: 'channel', categoryId: channel.category_id });
   };
 
-  const handleDragEnd = () => {
-    setDragChannelId(null);
-    setDropTarget(null);
-  };
-
-  const handleDrop = (e, targetChannel) => {
+  const handleChannelDrop = (e, targetChannel) => {
     e.preventDefault();
-    const draggedId = dragChannelId;
-    if (!draggedId || draggedId === targetChannel.id) {
-      handleDragEnd();
-      return;
-    }
+    if (!draggedItem || draggedItem.type !== 'channel') { handleDragEnd(); return; }
+    if (draggedItem.id === targetChannel.id) { handleDragEnd(); return; }
 
-    const draggedChannel = channels.find(c => c.id === draggedId);
+    const allChannels = [...channels].sort((a, b) => a.position - b.position);
+    const targetCategoryId = dropTarget?.categoryId ?? targetChannel.category_id;
+
+    // Get channels in the target category, excluding the dragged one
+    const categoryChannels = allChannels.filter(c => (c.category_id || null) === (targetCategoryId || null) && c.id !== draggedItem.id);
+
+    const draggedChannel = allChannels.find(c => c.id === draggedItem.id);
     if (!draggedChannel) { handleDragEnd(); return; }
 
-    // Get channels in the same category as the target
-    const targetCatId = targetChannel.category_id || null;
-    const sameCatChannels = channels
-      .filter(c => (c.category_id || null) === targetCatId && c.id !== draggedId)
-      .sort((a, b) => a.position - b.position);
+    // Find insert index
+    const targetIdx = categoryChannels.findIndex(c => c.id === targetChannel.id);
+    const insertIdx = dropTarget?.position === 'after' ? targetIdx + 1 : targetIdx;
 
-    // Insert dragged channel at the right position
-    const targetIdx = sameCatChannels.findIndex(c => c.id === targetChannel.id);
-    const insertIdx = dropTarget?.position === 'above' ? targetIdx : targetIdx + 1;
-    sameCatChannels.splice(insertIdx, 0, { ...draggedChannel, category_id: targetCatId });
+    // Insert at new position
+    categoryChannels.splice(insertIdx, 0, draggedChannel);
 
-    // Build position updates
-    const updates = sameCatChannels.map((ch, i) => ({
-      id: ch.id,
+    // Build update payload for the target category
+    const updates = categoryChannels.map((c, i) => ({
+      id: c.id,
       position: i,
-      category_id: targetCatId,
+      category_id: targetCategoryId,
     }));
+
+    // If channel moved between categories, also renumber the source category
+    if ((draggedChannel.category_id || null) !== (targetCategoryId || null)) {
+      const sourceChannels = allChannels.filter(c => (c.category_id || null) === (draggedChannel.category_id || null) && c.id !== draggedItem.id);
+      sourceChannels.forEach((c, i) => {
+        updates.push({ id: c.id, position: i, category_id: c.category_id });
+      });
+    }
 
     if (currentServer) {
       reorderChannels(currentServer.id, updates);
     }
 
     handleDragEnd();
+  };
+
+  // Category drag handlers
+  const handleCategoryDragStart = (e, category) => {
+    if (!canManageChannels) { e.preventDefault(); return; }
+    e.stopPropagation();
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', category.id);
+    setDraggedItem({ id: category.id, type: 'category' });
+  };
+
+  const handleCategoryDragOver = (e, category) => {
+    e.preventDefault();
+    if (!draggedItem || draggedItem.type !== 'category') return;
+    if (category.id === draggedItem.id) return;
+    e.dataTransfer.dropEffect = 'move';
+    const rect = e.currentTarget.getBoundingClientRect();
+    const mid = rect.top + rect.height / 2;
+    const position = e.clientY < mid ? 'before' : 'after';
+    setDropTarget({ id: category.id, position, type: 'category' });
+  };
+
+  const handleCategoryDrop = (e, targetCategory) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!draggedItem || draggedItem.type !== 'category') { handleDragEnd(); return; }
+    if (draggedItem.id === targetCategory.id) { handleDragEnd(); return; }
+
+    const sorted = [...categories].sort((a, b) => a.position - b.position);
+    const dragged = sorted.find(c => c.id === draggedItem.id);
+    if (!dragged) { handleDragEnd(); return; }
+
+    const filtered = sorted.filter(c => c.id !== draggedItem.id);
+    const targetIdx = filtered.findIndex(c => c.id === targetCategory.id);
+    const insertIdx = dropTarget?.position === 'after' ? targetIdx + 1 : targetIdx;
+    filtered.splice(insertIdx, 0, dragged);
+
+    const updates = filtered.map((c, i) => ({ id: c.id, position: i }));
+
+    if (currentServer) {
+      reorderCategories(currentServer.id, updates);
+    }
+
+    handleDragEnd();
+  };
+
+  const handleDragEnd = () => {
+    setDraggedItem(null);
+    setDropTarget(null);
   };
 
   // Close context menus on outside click
@@ -112,6 +195,42 @@ export default function Sidebar({ isHome }) {
     document.addEventListener('click', handler);
     return () => document.removeEventListener('click', handler);
   }, [serverContextMenu]);
+
+  // Listen for voice_state_update socket events
+  useEffect(() => {
+    const socket = getSocket();
+    if (!socket) return;
+
+    const handleVoiceUpdate = ({ channelId, userId, username, avatar, action, selfMute, selfDeaf }) => {
+      useStore.setState(s => {
+        const current = s.voiceUsers[channelId] || [];
+        if (action === 'leave') {
+          return { voiceUsers: { ...s.voiceUsers, [channelId]: current.filter(u => u.user_id !== userId) } };
+        }
+        if (action === 'update') {
+          return { voiceUsers: { ...s.voiceUsers, [channelId]: current.map(u => u.user_id === userId ? { ...u, self_mute: selfMute, self_deaf: selfDeaf } : u) } };
+        }
+        // action === 'join'
+        const existing = current.find(u => u.user_id === userId);
+        if (existing) {
+          return { voiceUsers: { ...s.voiceUsers, [channelId]: current.map(u => u.user_id === userId ? { ...u, self_mute: selfMute || false, self_deaf: selfDeaf || false } : u) } };
+        }
+        return { voiceUsers: { ...s.voiceUsers, [channelId]: [...current, { user_id: userId, username, avatar, self_mute: selfMute || false, self_deaf: selfDeaf || false }] } };
+      });
+    };
+
+    socket.on('voice_state_update', handleVoiceUpdate);
+    return () => socket.off('voice_state_update', handleVoiceUpdate);
+  }, []);
+
+  // Fetch initial voice states for voice channels when server changes
+  useEffect(() => {
+    if (!currentServer) return;
+    const voiceChannels = channels.filter(c => c.type === 'voice');
+    voiceChannels.forEach(vc => {
+      fetchVoiceStates(vc.id);
+    });
+  }, [currentServer?.id, channels.length]);
 
   const handleServerHeaderContextMenu = (e) => {
     e.preventDefault();
@@ -236,7 +355,12 @@ export default function Sidebar({ isHome }) {
     if (ch.type === 'text' || ch.type === 'announcement') {
       selectChannel(ch);
     } else if (ch.type === 'voice') {
-      handleVoiceClick(ch);
+      // Toggle voice: if already in this channel, leave; otherwise join
+      if (voiceChannel?.id === ch.id) {
+        useStore.getState().leaveVoice();
+      } else {
+        joinVoice(ch.id);
+      }
     }
   };
 
@@ -275,19 +399,33 @@ export default function Sidebar({ isHome }) {
             channel={ch}
             active={currentChannel?.id === ch.id}
             onClick={() => channelClickHandler(ch)}
-            isDragging={dragChannelId === ch.id}
-            dropTarget={dropTarget?.id === ch.id ? dropTarget.position : null}
-            onDragStart={(e) => handleDragStart(e, ch)}
-            onDragOver={(e) => handleDragOver(e, ch)}
+            isDragging={draggedItem?.type === 'channel' && draggedItem?.id === ch.id}
+            dropTarget={dropTarget?.type === 'channel' && dropTarget?.id === ch.id ? dropTarget.position : null}
+            onDragStart={(e) => handleChannelDragStart(e, ch)}
+            onDragOver={(e) => handleChannelDragOver(e, ch)}
             onDragEnd={handleDragEnd}
-            onDrop={(e) => handleDrop(e, ch)}
+            onDrop={(e) => handleChannelDrop(e, ch)}
+            canDrag={canManageChannels}
           />
         ))}
 
         {/* Categorized channels */}
-        {categories.map(cat => (
+        {[...categories].sort((a, b) => a.position - b.position).map(cat => (
           <div key={cat.id} className="category">
-            <div className="category-header" onClick={() => toggleCategory(cat.id)}>
+            <div
+              className={`category-header ${draggedItem?.type === 'category' && draggedItem?.id === cat.id ? 'dragging' : ''} ${dropTarget?.type === 'category' && dropTarget?.id === cat.id ? 'drop-' + dropTarget.position : ''}`}
+              onClick={() => toggleCategory(cat.id)}
+              draggable={canManageChannels}
+              onDragStart={(e) => handleCategoryDragStart(e, cat)}
+              onDragOver={(e) => handleCategoryDragOver(e, cat)}
+              onDragEnd={handleDragEnd}
+              onDrop={(e) => handleCategoryDrop(e, cat)}
+              onDragLeave={() => {
+                if (dropTarget?.type === 'category' && dropTarget?.id === cat.id) {
+                  setDropTarget(null);
+                }
+              }}
+            >
               <span className={`category-arrow ${collapsedCategories[cat.id] ? 'collapsed' : ''}`}>▼</span>
               {cat.name}
             </div>
@@ -299,12 +437,13 @@ export default function Sidebar({ isHome }) {
                   channel={ch}
                   active={currentChannel?.id === ch.id}
                   onClick={() => channelClickHandler(ch)}
-                  isDragging={dragChannelId === ch.id}
-                  dropTarget={dropTarget?.id === ch.id ? dropTarget.position : null}
-                  onDragStart={(e) => handleDragStart(e, ch)}
-                  onDragOver={(e) => handleDragOver(e, ch)}
+                  isDragging={draggedItem?.type === 'channel' && draggedItem?.id === ch.id}
+                  dropTarget={dropTarget?.type === 'channel' && dropTarget?.id === ch.id ? dropTarget.position : null}
+                  onDragStart={(e) => handleChannelDragStart(e, ch)}
+                  onDragOver={(e) => handleChannelDragOver(e, ch)}
                   onDragEnd={handleDragEnd}
-                  onDrop={(e) => handleDrop(e, ch)}
+                  onDrop={(e) => handleChannelDrop(e, ch)}
+                  canDrag={canManageChannels}
                 />
               ))}
           </div>
@@ -315,24 +454,6 @@ export default function Sidebar({ isHome }) {
       {userPanel}
     </div>
   );
-}
-
-function handleVoiceClick(channel) {
-  const socket = getSocket();
-  const state = useStore.getState();
-
-  if (state.voiceChannel?.id === channel.id) {
-    socket?.emit('voice_leave', { channelId: channel.id });
-    state.setVoiceChannel(null);
-    state.setVoiceParticipants([]);
-  } else {
-    if (state.voiceChannel) {
-      socket?.emit('voice_leave', { channelId: state.voiceChannel.id });
-    }
-    state.setVoiceChannel(channel);
-    state.setVoiceState({ selfMute: false, selfDeaf: false });
-    socket?.emit('voice_join', { channelId: channel.id, serverId: channel.server_id });
-  }
 }
 
 // Small mute indicator next to server name
@@ -489,15 +610,14 @@ function ServerContextMenu({ serverId, x, y, onClose }) {
   );
 }
 
-function ChannelItem({ channel, active, onClick, isDragging, dropTarget, onDragStart, onDragOver, onDragEnd, onDrop }) {
+function ChannelItem({ channel, active, onClick, isDragging, dropTarget, onDragStart, onDragOver, onDragEnd, onDrop, canDrag }) {
   const voiceChannel = useStore(s => s.voiceChannel);
-  const voiceParticipants = useStore(s => s.voiceParticipants);
+  const channelVoiceUsers = useStore(s => s.voiceUsers[channel.id]) || [];
   const unread = useStore(s => s.unreadChannels[channel.id]);
   const openChannelSettings = useStore(s => s.openChannelSettings);
   const currentServer = useStore(s => s.currentServer);
   const user = useStore(s => s.user);
   const isChannelMuted = useStore(s => s.isChannelMuted);
-  const isVoiceActive = channel.type === 'voice' && voiceChannel?.id === channel.id;
   const hasUnread = unread && unread.count > 0;
   const muted = isChannelMuted(channel.id);
 
@@ -525,18 +645,16 @@ function ChannelItem({ channel, active, onClick, isDragging, dropTarget, onDragS
   return (
     <>
       <div
-        className={`channel-item ${active ? 'active' : ''} ${hasUnread ? 'unread' : ''} ${isDragging ? 'dragging' : ''}`}
+        className={`channel-item ${active ? 'active' : ''} ${hasUnread ? 'unread' : ''} ${isDragging ? 'dragging' : ''} ${dropTarget === 'before' ? 'drop-before' : ''} ${dropTarget === 'after' ? 'drop-after' : ''}`}
         onClick={onClick}
         onContextMenu={handleContextMenu}
-        draggable
+        draggable={canDrag}
         onDragStart={onDragStart}
         onDragOver={onDragOver}
         onDragEnd={onDragEnd}
         onDrop={onDrop}
         style={{
           opacity: isDragging ? 0.4 : muted ? 0.4 : 1,
-          borderTop: dropTarget === 'above' ? '2px solid var(--brand-500)' : undefined,
-          borderBottom: dropTarget === 'below' ? '2px solid var(--brand-500)' : undefined,
         }}
       >
         <span className="channel-icon">
@@ -594,18 +712,27 @@ function ChannelItem({ channel, active, onClick, isDragging, dropTarget, onDragS
           onClose={() => setContextMenu(null)}
         />
       )}
-      {isVoiceActive && voiceParticipants.length > 0 && (
+      {channel.type === 'voice' && channelVoiceUsers.length > 0 && (
         <div className="voice-users">
-          {voiceParticipants.map(p => (
-            <div key={p.userId} className="voice-user">
-              <svg width="16" height="16" viewBox="0 0 24 24" style={{ opacity: 0.6 }}>
-                <path fill="currentColor" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14.2c-2.5 0-4.71-1.28-6-3.22.03-1.99 4-3.08 6-3.08 1.99 0 5.97 1.09 6 3.08-1.29 1.94-3.5 3.22-6 3.22z"/>
-              </svg>
-              <span>{p.username}</span>
-              {p.selfMute && <span title="Muted" style={{ fontSize: 12, opacity: 0.6 }}>🔇</span>}
-              {p.selfDeaf && <span title="Deafened" style={{ fontSize: 12, opacity: 0.6 }}>🔈</span>}
-            </div>
-          ))}
+          {channelVoiceUsers.map(vu => {
+            const avatarColor = `hsl(${(vu.user_id || '').split('').reduce((a, c) => a + c.charCodeAt(0), 0) % 360}, 60%, 50%)`;
+            return (
+              <div key={vu.user_id} className="voice-user-item">
+                <div className="voice-user-avatar" style={{ background: avatarColor }}>
+                  {vu.avatar ? (
+                    <img src={vu.avatar} alt="" />
+                  ) : (
+                    vu.username?.[0]?.toUpperCase() || '?'
+                  )}
+                </div>
+                <span className="voice-user-name">{vu.username}</span>
+                <div className="voice-user-icons">
+                  {vu.self_mute && <MicOffSmall />}
+                  {vu.self_deaf && <HeadphoneOffSmall />}
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
     </>

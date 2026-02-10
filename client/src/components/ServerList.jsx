@@ -1,11 +1,132 @@
-import React from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useStore } from '../store';
 
 export default function ServerList() {
-  const { servers, currentServer, selectServer, toggleCreateServer, toggleDiscover, showDiscover, unreadServers } = useStore();
+  const {
+    servers, currentServer, selectServer, toggleCreateServer,
+    toggleDiscover, showDiscover, unreadServers,
+    serverFolders, fetchFolders, createFolder, deleteFolder,
+    addServerToFolder, removeServerFromFolder, updateFolder,
+  } = useStore();
   const navigate = useNavigate();
   const isHome = !currentServer && !showDiscover;
+  const [expandedFolders, setExpandedFolders] = useState({});
+  const [contextMenu, setContextMenu] = useState(null);
+  const [editingFolder, setEditingFolder] = useState(null);
+
+  useEffect(() => { fetchFolders(); }, []);
+
+  // Close context menu on outside click
+  useEffect(() => {
+    if (!contextMenu) return;
+    const handler = () => setContextMenu(null);
+    document.addEventListener('click', handler);
+    return () => document.removeEventListener('click', handler);
+  }, [contextMenu]);
+
+  const toggleFolder = (folderId) => {
+    setExpandedFolders(prev => ({ ...prev, [folderId]: !prev[folderId] }));
+  };
+
+  // Group servers: those in folders vs standalone
+  const folderedServerIds = new Set(serverFolders.flatMap(f => f.server_ids));
+  const standaloneServers = servers.filter(s => !folderedServerIds.has(s.id));
+
+  // Build ordered list
+  const renderItems = [];
+
+  const sortedFolders = [...serverFolders].sort((a, b) => a.position - b.position);
+
+  // Render folders first in order, then standalone servers
+  for (const folder of sortedFolders) {
+    const folderServers = folder.server_ids.map(id => servers.find(s => s.id === id)).filter(Boolean);
+    if (folderServers.length === 0) continue;
+
+    const isExpanded = expandedFolders[folder.id];
+    const hasUnread = folderServers.some(s => unreadServers[s.id] > 0 && currentServer?.id !== s.id);
+    const hasActive = folderServers.some(s => currentServer?.id === s.id);
+
+    renderItems.push(
+      <div key={`folder-${folder.id}`} className="server-folder-wrapper">
+        {/* Folder icon - collapsed shows mini icons */}
+        <div className="server-icon-wrapper">
+          {hasActive && <div className="server-pill" style={{ height: 40 }} />}
+          {hasUnread && !hasActive && <div className="server-pill" style={{ height: 8 }} />}
+          <div
+            className={`server-folder ${isExpanded ? 'expanded' : ''} ${hasActive ? 'active' : ''}`}
+            style={{ background: isExpanded ? `${folder.color}33` : 'var(--bg-tertiary)' }}
+            onClick={() => toggleFolder(folder.id)}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              setContextMenu({ type: 'folder', folderId: folder.id, folder, x: e.clientX, y: e.clientY });
+            }}
+            title={folder.name}
+          >
+            {isExpanded ? (
+              <span style={{ fontSize: 12, color: folder.color, fontWeight: 600 }}>{folder.name.slice(0, 3)}</span>
+            ) : (
+              <div className="folder-mini-icons">
+                {folderServers.slice(0, 4).map(s => (
+                  <div key={s.id} className="folder-mini-icon">
+                    {s.icon ? <img src={s.icon} alt="" /> : s.name[0]}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Expanded folder contents */}
+        {isExpanded && (
+          <div className="server-folder-contents" style={{ borderLeft: `2px solid ${folder.color}`, marginLeft: 20, paddingLeft: 4 }}>
+            {folderServers.map(server => renderServerIcon(server))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // Then standalone servers
+  for (const server of standaloneServers) {
+    renderItems.push(renderServerIcon(server));
+  }
+
+  function renderServerIcon(server) {
+    const isActive = currentServer?.id === server.id;
+    const unreadCount = unreadServers[server.id] || 0;
+    const hasUnread = unreadCount > 0 && !isActive;
+
+    return (
+      <div key={server.id} className={`server-icon-wrapper ${isActive ? 'active' : ''} ${hasUnread ? 'has-unread' : ''}`}>
+        <div className="server-pill" />
+        <div
+          className={`server-icon ${isActive ? 'active' : ''}`}
+          onClick={() => {
+            useStore.setState({ showDiscover: false });
+            selectServer(server.id);
+            navigate(`/channels/${server.id}`);
+          }}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            setContextMenu({ type: 'server', serverId: server.id, server, x: e.clientX, y: e.clientY });
+          }}
+          title={server.name}
+        >
+          {server.icon ? (
+            <img src={server.icon} alt={server.name} />
+          ) : (
+            server.name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()
+          )}
+          {hasUnread && (
+            <div className="notification-badge">
+              {unreadCount > 99 ? '99+' : unreadCount}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="server-list">
@@ -28,37 +149,7 @@ export default function ServerList() {
 
       <div className="server-separator" />
 
-      {servers.map(server => {
-        const isActive = currentServer?.id === server.id;
-        const unreadCount = unreadServers[server.id] || 0;
-        const hasUnread = unreadCount > 0 && !isActive;
-
-        return (
-          <div key={server.id} className={`server-icon-wrapper ${isActive ? 'active' : ''} ${hasUnread ? 'has-unread' : ''}`}>
-            <div className="server-pill" />
-            <div
-              className={`server-icon ${isActive ? 'active' : ''}`}
-              onClick={() => {
-                useStore.setState({ showDiscover: false });
-                selectServer(server.id);
-                navigate(`/channels/${server.id}`);
-              }}
-              title={server.name}
-            >
-              {server.icon ? (
-                <img src={server.icon} alt={server.name} />
-              ) : (
-                server.name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()
-              )}
-              {hasUnread && (
-                <div className="notification-badge">
-                  {unreadCount > 99 ? '99+' : unreadCount}
-                </div>
-              )}
-            </div>
-          </div>
-        );
-      })}
+      {renderItems}
 
       <div className="server-separator" />
 
@@ -87,6 +178,90 @@ export default function ServerList() {
             <path fill="currentColor" d="M12 2C6.486 2 2 6.486 2 12s4.486 10 10 10 10-4.486 10-10S17.514 2 12 2zm0 18c-4.411 0-8-3.589-8-8s3.589-8 8-8 8 3.589 8 8-3.589 8-8 8z" />
             <path fill="currentColor" d="M14.829 9.172l-4.656 1.999-1.999 4.657 4.656-1.999 1.999-4.657zm-2.829 4.243c-.781 0-1.414-.633-1.414-1.414 0-.782.633-1.415 1.414-1.415.782 0 1.415.633 1.415 1.415 0 .781-.633 1.414-1.415 1.414z" />
           </svg>
+        </div>
+      </div>
+
+      {/* Context Menu */}
+      {contextMenu && (
+        <div className="server-context-menu" style={{ position: 'fixed', left: contextMenu.x, top: contextMenu.y, zIndex: 9999 }}>
+          {contextMenu.type === 'server' && (
+            <>
+              <div className="context-menu-header">{contextMenu.server.name}</div>
+              {serverFolders.length > 0 && !folderedServerIds.has(contextMenu.serverId) && (
+                serverFolders.map(f => (
+                  <button key={f.id} onClick={() => { addServerToFolder(f.id, contextMenu.serverId); setContextMenu(null); }}>
+                    Add to {f.name}
+                  </button>
+                ))
+              )}
+              {folderedServerIds.has(contextMenu.serverId) && (
+                <button onClick={() => {
+                  const folder = serverFolders.find(f => f.server_ids.includes(contextMenu.serverId));
+                  if (folder) removeServerFromFolder(folder.id, contextMenu.serverId);
+                  setContextMenu(null);
+                }}>Remove from Folder</button>
+              )}
+              {!folderedServerIds.has(contextMenu.serverId) && (
+                <button onClick={() => {
+                  createFolder('New Folder', '#5865F2', [contextMenu.serverId]);
+                  setContextMenu(null);
+                }}>Create Folder</button>
+              )}
+            </>
+          )}
+          {contextMenu.type === 'folder' && (
+            <>
+              <div className="context-menu-header">{contextMenu.folder.name}</div>
+              <button onClick={() => { setEditingFolder(contextMenu.folderId); setContextMenu(null); }}>Edit Folder</button>
+              <button onClick={() => { deleteFolder(contextMenu.folderId); setContextMenu(null); }} style={{ color: '#ED4245' }}>Delete Folder</button>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* Folder Edit Modal */}
+      {editingFolder && <FolderEditModal folderId={editingFolder} onClose={() => setEditingFolder(null)} />}
+    </div>
+  );
+}
+
+function FolderEditModal({ folderId, onClose }) {
+  const { serverFolders, updateFolder } = useStore();
+  const folder = serverFolders.find(f => f.id === folderId);
+  const [name, setName] = useState(folder?.name || '');
+  const [color, setColor] = useState(folder?.color || '#5865F2');
+  const ref = useRef(null);
+
+  useEffect(() => {
+    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) onClose(); };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  if (!folder) return null;
+
+  const COLORS = ['#5865F2', '#ED4245', '#FEE75C', '#57F287', '#EB459E', '#3498DB', '#E67E22', '#9B59B6'];
+
+  return (
+    <div className="folder-edit-overlay">
+      <div className="folder-edit-modal" ref={ref}>
+        <h3>Edit Folder</h3>
+        <label>Name</label>
+        <input className="form-input" value={name} onChange={e => setName(e.target.value)} maxLength={32} />
+        <label>Color</label>
+        <div className="folder-color-picker">
+          {COLORS.map(c => (
+            <div
+              key={c}
+              className={`folder-color-swatch ${color === c ? 'active' : ''}`}
+              style={{ background: c }}
+              onClick={() => setColor(c)}
+            />
+          ))}
+        </div>
+        <div className="folder-edit-actions">
+          <button className="btn-secondary" onClick={onClose}>Cancel</button>
+          <button className="btn-primary" onClick={() => { updateFolder(folderId, { name, color }); onClose(); }}>Save</button>
         </div>
       </div>
     </div>

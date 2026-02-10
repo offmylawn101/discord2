@@ -331,6 +331,12 @@ router.patch('/:channelId/messages/:messageId', authenticate, async (req, res) =
       return res.status(403).json({ error: 'You can only edit your own messages' });
     }
 
+    // Save the old content to edit history before updating
+    await db.run(
+      'INSERT INTO message_edits (id, message_id, content, edited_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)',
+      [uuidv4(), messageId, message.content]
+    );
+
     await db.run('UPDATE messages SET content = ?, edited_at = CURRENT_TIMESTAMP WHERE id = ?', [content, messageId]);
 
     const updated = await db.get(`
@@ -343,6 +349,23 @@ router.patch('/:channelId/messages/:messageId', authenticate, async (req, res) =
 
     res.json(updated);
   } catch (err) {
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Get edit history for a message
+router.get('/:channelId/messages/:messageId/edits', authenticate, async (req, res) => {
+  try {
+    const { messageId } = req.params;
+
+    const edits = await db.all(
+      'SELECT id, content, edited_at FROM message_edits WHERE message_id = ? ORDER BY edited_at DESC',
+      [messageId]
+    );
+
+    res.json(edits);
+  } catch (err) {
+    console.error('Get edit history error:', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -542,6 +565,27 @@ router.get('/:channelId/messages/search', authenticate, searchLimiter, async (re
     } catch (fallbackErr) {
       res.status(500).json({ error: 'Search failed' });
     }
+  }
+});
+
+// Get users who reacted with a specific emoji
+router.get('/:channelId/messages/:messageId/reactions/:emoji', authenticate, async (req, res) => {
+  try {
+    const { messageId, emoji } = req.params;
+    const decodedEmoji = decodeURIComponent(emoji);
+
+    const users = await db.all(`
+      SELECT u.id, u.username, u.avatar
+      FROM reactions r
+      INNER JOIN users u ON u.id = r.user_id
+      WHERE r.message_id = ? AND r.emoji = ?
+      ORDER BY r.created_at ASC
+    `, [messageId, decodedEmoji]);
+
+    res.json(users);
+  } catch (err) {
+    console.error('Get reaction users error:', err);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 

@@ -145,4 +145,34 @@ router.post('/avatar', authenticate, avatarUpload.single('avatar'), async (req, 
   }
 });
 
+// Get user profile with mutual servers and friends
+router.get('/users/:userId/profile', authenticate, async (req, res) => {
+  try {
+    const user = await db.get(
+      'SELECT id, username, avatar, banner_color, about_me, custom_status, status, created_at FROM users WHERE id = ?',
+      [req.params.userId]
+    );
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    // Get mutual servers
+    const mutualServers = await db.all(`
+      SELECT s.id, s.name, s.icon FROM servers s
+      INNER JOIN members m1 ON m1.server_id = s.id AND m1.user_id = ?
+      INNER JOIN members m2 ON m2.server_id = s.id AND m2.user_id = ?
+    `, [req.userId, req.params.userId]);
+
+    // Get mutual friends
+    const mutualFriends = await db.all(`
+      SELECT u.id, u.username, u.avatar, u.status FROM users u
+      INNER JOIN relationships r1 ON r1.user_id = ? AND r1.target_id = u.id AND r1.type = 'friend'
+      INNER JOIN relationships r2 ON r2.user_id = ? AND r2.target_id = u.id AND r2.type = 'friend'
+    `, [req.userId, req.params.userId]);
+
+    res.json({ ...user, mutualServers, mutualFriends });
+  } catch (err) {
+    console.error('Profile error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 module.exports = router;

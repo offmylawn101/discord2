@@ -1,9 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useStore } from '../store';
 import { getSocket } from '../utils/socket';
 import { renderMarkdown } from '../utils/markdown';
+import { api } from '../utils/api';
 import EmojiPicker from './EmojiPicker';
-import ProfileCard from './ProfileCard';
+import UserProfilePopup from './UserProfilePopup';
 import ImageLightbox from './ImageLightbox';
 import ContextMenu from './ContextMenu';
 
@@ -16,7 +17,41 @@ export default function MessageItem({
   const [showProfile, setShowProfile] = useState(null);
   const [lightboxImage, setLightboxImage] = useState(null);
   const [contextMenu, setContextMenu] = useState(null);
+  const [showEditHistory, setShowEditHistory] = useState(false);
+  const [editHistory, setEditHistory] = useState([]);
+  const [loadingHistory, setLoadingHistory] = useState(false);
+  const editHistoryRef = useRef(null);
+  const [reactionPopover, setReactionPopover] = useState(null);
+  const [loadingReactors, setLoadingReactors] = useState(false);
+  const reactionHoverTimeout = useRef(null);
   const { addReaction, removeReaction, deleteMessage, pinMessage, unpinMessage, currentChannel } = useStore();
+
+  useEffect(() => {
+    if (showEditHistory && editHistory.length === 0) {
+      setLoadingHistory(true);
+      api.get(`/messages/${message.channel_id}/messages/${message.id}/edits`)
+        .then(edits => {
+          setEditHistory(edits);
+          setLoadingHistory(false);
+        })
+        .catch(() => setLoadingHistory(false));
+    }
+  }, [showEditHistory]);
+
+  useEffect(() => {
+    if (!showEditHistory) return;
+    const handleClickOutside = (e) => {
+      if (editHistoryRef.current && !editHistoryRef.current.contains(e.target)) {
+        setShowEditHistory(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [showEditHistory]);
+  useEffect(() => {
+    return () => clearTimeout(reactionHoverTimeout.current);
+  }, []);
+
   const embeds = useStore(s => s.messageEmbeds[message.id]);
 
   const formatTime = (dateStr) => {
@@ -69,6 +104,28 @@ export default function MessageItem({
     }
   };
 
+  const handleReactionHover = async (e, reaction) => {
+    clearTimeout(reactionHoverTimeout.current);
+    const target = e.currentTarget;
+    reactionHoverTimeout.current = setTimeout(async () => {
+      const rect = target.getBoundingClientRect();
+      setLoadingReactors(true);
+      setReactionPopover({ emoji: reaction.emoji, users: [], x: rect.left, y: rect.top - 8 });
+      try {
+        const users = await api.get(`/messages/${message.channel_id}/messages/${message.id}/reactions/${encodeURIComponent(reaction.emoji)}`);
+        setReactionPopover(prev => prev?.emoji === reaction.emoji ? { ...prev, users } : prev);
+      } catch {}
+      setLoadingReactors(false);
+    }, 300);
+  };
+
+  const handleReactionLeave = () => {
+    clearTimeout(reactionHoverTimeout.current);
+    reactionHoverTimeout.current = setTimeout(() => {
+      setReactionPopover(null);
+    }, 200);
+  };
+
   const handleContextMenu = (e) => {
     if (bulkSelectMode) {
       e.preventDefault();
@@ -92,8 +149,9 @@ export default function MessageItem({
   };
 
   const handleAvatarClick = (e) => {
+    e.stopPropagation();
     const rect = e.currentTarget.getBoundingClientRect();
-    setShowProfile({ x: rect.right + 8, y: rect.top, anchorLeft: rect.left });
+    setShowProfile({ x: rect.right + 8, y: rect.top });
   };
 
   const handleCreateThread = async () => {
@@ -206,9 +264,49 @@ export default function MessageItem({
             </div>
           </div>
         ) : (
-          <div className="message-content">
+          <div className="message-content" style={{ position: 'relative' }}>
             {renderMarkdown(message.content)}
-            {message.edited_at && <span className="edited"> (edited)</span>}
+            {message.edited_at && (
+              <span
+                className="message-edited"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowEditHistory(!showEditHistory);
+                  setEditHistory([]);
+                }}
+                title={`Last edited: ${new Date(message.edited_at).toLocaleString()}`}
+              >
+                {' '}(edited)
+              </span>
+            )}
+            {showEditHistory && (
+              <div className="edit-history-popup" ref={editHistoryRef}>
+                <div className="edit-history-header">
+                  <span>Edit History</span>
+                  <button onClick={() => setShowEditHistory(false)}>&times;</button>
+                </div>
+                {loadingHistory ? (
+                  <div className="edit-history-loading">Loading...</div>
+                ) : editHistory.length === 0 ? (
+                  <div className="edit-history-empty">No edit history available</div>
+                ) : (
+                  <div className="edit-history-list">
+                    <div className="edit-history-item current">
+                      <div className="edit-history-timestamp">Current version</div>
+                      <div className="edit-history-content">{message.content}</div>
+                    </div>
+                    {editHistory.map(edit => (
+                      <div key={edit.id} className="edit-history-item">
+                        <div className="edit-history-timestamp">
+                          {new Date(edit.edited_at).toLocaleString()}
+                        </div>
+                        <div className="edit-history-content">{edit.content}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
 
@@ -232,12 +330,16 @@ export default function MessageItem({
           <div className="message-attachments">
             {message.attachments.map(att => {
               if (att.content_type?.startsWith('image/')) {
+                const allImages = message.attachments
+                  ?.filter(a => a.content_type?.startsWith('image/'))
+                  .map(a => ({ src: `/uploads/${a.filepath}`, filename: a.filename })) || [];
+                const clickedIndex = allImages.findIndex(img => img.src === `/uploads/${att.filepath}`);
                 return (
                   <img
                     key={att.id}
                     src={`/uploads/${att.filepath}`}
                     alt={att.filename}
-                    onClick={() => setLightboxImage({ src: `/uploads/${att.filepath}`, filename: att.filename })}
+                    onClick={() => setLightboxImage({ src: `/uploads/${att.filepath}`, filename: att.filename, images: allImages, initialIndex: clickedIndex })}
                   />
                 );
               }
@@ -337,10 +439,12 @@ export default function MessageItem({
                 key={r.emoji}
                 className={`reaction ${r.me ? 'me' : ''}`}
                 onClick={() => handleReaction(r.emoji)}
-                title={`${r.count} reaction${r.count !== 1 ? 's' : ''}`}
+                onMouseEnter={(e) => handleReactionHover(e, r)}
+                onMouseLeave={handleReactionLeave}
+                title={r.me ? (r.count > 1 ? `You and ${r.count - 1} other${r.count > 2 ? 's' : ''}` : 'You reacted') : `${r.count} reaction${r.count > 1 ? 's' : ''}`}
               >
-                <span>{r.emoji}</span>
-                <span className="count">{r.count}</span>
+                <span className="reaction-emoji">{r.emoji}</span>
+                <span className="reaction-count">{r.count}</span>
               </button>
             ))}
             <button
@@ -351,6 +455,35 @@ export default function MessageItem({
             >
               +
             </button>
+            {reactionPopover && (
+              <div
+                className="reaction-popover"
+                style={{ left: reactionPopover.x, top: reactionPopover.y }}
+                onMouseEnter={() => clearTimeout(reactionHoverTimeout.current)}
+                onMouseLeave={() => setReactionPopover(null)}
+              >
+                <div className="reaction-popover-header">
+                  <span className="reaction-popover-emoji">{reactionPopover.emoji}</span>
+                  <span className="reaction-popover-count">{reactionPopover.users.length || ''}</span>
+                </div>
+                <div className="reaction-popover-users">
+                  {loadingReactors ? (
+                    <div className="reaction-popover-loading">Loading...</div>
+                  ) : (
+                    reactionPopover.users.map(u => (
+                      <div key={u.id} className="reaction-popover-user">
+                        <div className="reaction-popover-avatar" style={{
+                          background: `hsl(${u.id.split('').reduce((a, c) => a + c.charCodeAt(0), 0) % 360}, 60%, 50%)`
+                        }}>
+                          {u.avatar ? <img src={u.avatar} alt="" /> : u.username?.[0]?.toUpperCase()}
+                        </div>
+                        <span>{u.username}</span>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -383,9 +516,9 @@ export default function MessageItem({
         </div>
       )}
 
-      {/* Profile card */}
+      {/* Profile popup */}
       {showProfile && (
-        <ProfileCard
+        <UserProfilePopup
           userId={message.author_id}
           position={showProfile}
           onClose={() => setShowProfile(null)}
@@ -397,6 +530,8 @@ export default function MessageItem({
         <ImageLightbox
           src={lightboxImage.src}
           filename={lightboxImage.filename}
+          images={lightboxImage.images}
+          initialIndex={lightboxImage.initialIndex}
           onClose={() => setLightboxImage(null)}
         />
       )}

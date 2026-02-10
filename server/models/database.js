@@ -360,6 +360,14 @@ async function initialize() {
       CREATE INDEX IF NOT EXISTS idx_messages_reply ON messages(reply_to_id);
       CREATE INDEX IF NOT EXISTS idx_server_members_server ON server_members(server_id);
 
+      CREATE TABLE IF NOT EXISTS message_edits (
+        id TEXT PRIMARY KEY,
+        message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+        content TEXT NOT NULL,
+        edited_at TIMESTAMP DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_message_edits_message ON message_edits(message_id);
+
       -- Add is_public column if not exists (migration for existing DBs)
       ALTER TABLE servers ADD COLUMN IF NOT EXISTS is_public INTEGER DEFAULT 0;
       CREATE INDEX IF NOT EXISTS idx_servers_public ON servers(is_public);
@@ -446,6 +454,17 @@ async function initialize() {
         UNIQUE(user_id, target_type, target_id)
       );
       CREATE INDEX IF NOT EXISTS idx_notification_settings_user ON notification_settings(user_id);
+
+      CREATE TABLE IF NOT EXISTS server_folders (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        name TEXT NOT NULL DEFAULT 'Folder',
+        color TEXT DEFAULT '#5865F2',
+        server_ids TEXT DEFAULT '[]',
+        position INTEGER DEFAULT 0,
+        created_at TIMESTAMP DEFAULT NOW()
+      );
+      CREATE INDEX IF NOT EXISTS idx_server_folders_user ON server_folders(user_id);
 
       -- Trigger to auto-update search vector
       CREATE OR REPLACE FUNCTION messages_search_update() RETURNS trigger AS $$
@@ -678,6 +697,23 @@ async function initialize() {
         UNIQUE(user_id, target_type, target_id)
       );
       CREATE INDEX IF NOT EXISTS idx_notification_settings_user ON notification_settings(user_id);
+      CREATE TABLE IF NOT EXISTS server_folders (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        name TEXT NOT NULL DEFAULT 'Folder',
+        color TEXT DEFAULT '#5865F2',
+        server_ids TEXT DEFAULT '[]',
+        position INTEGER DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE INDEX IF NOT EXISTS idx_server_folders_user ON server_folders(user_id);
+      CREATE TABLE IF NOT EXISTS message_edits (
+        id TEXT PRIMARY KEY,
+        message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+        content TEXT NOT NULL,
+        edited_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE INDEX IF NOT EXISTS idx_message_edits_message ON message_edits(message_id);
       CREATE INDEX IF NOT EXISTS idx_messages_channel ON messages(channel_id, created_at);
       CREATE INDEX IF NOT EXISTS idx_messages_author ON messages(author_id);
       CREATE INDEX IF NOT EXISTS idx_server_members_user ON server_members(user_id);
@@ -711,6 +747,21 @@ async function initialize() {
       sqlite.exec(`ALTER TABLE servers ADD COLUMN is_public INTEGER DEFAULT 0`);
     } catch (e) {
       // Column may already exist
+    }
+
+    // Add message_edits table if not exists (migration for existing DBs)
+    try {
+      sqlite.exec(`
+        CREATE TABLE IF NOT EXISTS message_edits (
+          id TEXT PRIMARY KEY,
+          message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+          content TEXT NOT NULL,
+          edited_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_message_edits_message ON message_edits(message_id);
+      `);
+    } catch (e) {
+      // Table may already exist
     }
 
     // Triggers to keep FTS in sync (use try/catch since CREATE TRIGGER IF NOT EXISTS not supported in older SQLite)
