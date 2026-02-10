@@ -279,23 +279,56 @@ router.get('/:channelId/pins', authenticate, async (req, res) => {
   }
 });
 
-// Search messages in channel
+// Search messages in channel (with FTS)
 router.get('/:channelId/messages/search', authenticate, searchLimiter, async (req, res) => {
   try {
     const { channelId } = req.params;
-    const { q } = req.query;
+    const { q, limit = 25 } = req.query;
     if (!q) return res.json([]);
 
-    const messages = await db.all(`
-      SELECT m.*, u.username, u.discriminator, u.avatar
-      FROM messages m INNER JOIN users u ON u.id = m.author_id
-      WHERE m.channel_id = ? AND m.content LIKE ?
-      ORDER BY m.created_at DESC LIMIT 25
-    `, [channelId, `%${q}%`]);
+    const searchLimit = Math.min(parseInt(limit) || 25, 50);
+    let messages;
+
+    if (db.isPg) {
+      // PostgreSQL: use tsvector full-text search
+      const tsquery = q.split(/\s+/).filter(Boolean).join(' & ');
+      messages = await db.all(`
+        SELECT m.*, u.username, u.discriminator, u.avatar,
+          ts_rank(m.search_vector, to_tsquery('english', $1)) as rank
+        FROM messages m INNER JOIN users u ON u.id = m.author_id
+        WHERE m.channel_id = $2 AND m.search_vector @@ to_tsquery('english', $1)
+        ORDER BY rank DESC, m.created_at DESC LIMIT $3
+      `, [tsquery, channelId, searchLimit]);
+    } else {
+      // SQLite: use FTS5
+      messages = await db.all(`
+        SELECT m.*, u.username, u.discriminator, u.avatar
+        FROM messages m
+        INNER JOIN users u ON u.id = m.author_id
+        INNER JOIN messages_fts fts ON fts.rowid = m.rowid
+        WHERE m.channel_id = ? AND messages_fts MATCH ?
+        ORDER BY m.created_at DESC LIMIT ?
+      `, [channelId, q, searchLimit]);
+    }
 
     res.json(messages);
   } catch (err) {
-    res.status(500).json({ error: 'Internal server error' });
+    console.error('Search error:', err);
+    // Fallback to LIKE search if FTS fails
+    try {
+      const { channelId } = req.params;
+      const { q, limit = 25 } = req.query;
+      const searchLimit = Math.min(parseInt(limit) || 25, 50);
+      const messages = await db.all(`
+        SELECT m.*, u.username, u.discriminator, u.avatar
+        FROM messages m INNER JOIN users u ON u.id = m.author_id
+        WHERE m.channel_id = ? AND m.content LIKE ?
+        ORDER BY m.created_at DESC LIMIT ?
+      `, [channelId, `%${q}%`, searchLimit]);
+      res.json(messages);
+    } catch (fallbackErr) {
+      res.status(500).json({ error: 'Search failed' });
+    }
   }
 });
 
