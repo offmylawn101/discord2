@@ -4,8 +4,11 @@ const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
 const path = require('path');
+const helmet = require('helmet');
+const compression = require('compression');
 
 const { authenticate } = require('./middleware/auth');
+const { globalLimiter, authLimiter } = require('./middleware/rateLimit');
 const { authenticateSocket } = require('./middleware/auth');
 const { setupSocketHandlers } = require('./socket/handler');
 
@@ -44,13 +47,36 @@ app.use(cors({
   credentials: true,
 }));
 app.use(express.json());
-app.use('/uploads', express.static(path.join(__dirname, '..', 'uploads')));
+
+// Security headers (relaxed CSP for SPA)
+app.use(helmet({
+  contentSecurityPolicy: false,
+  crossOriginEmbedderPolicy: false,
+}));
+
+// Gzip compression
+app.use(compression());
+
+// Global rate limit on all API routes
+app.use('/api', globalLimiter);
+
+app.use('/uploads', express.static(path.join(__dirname, '..', 'uploads'), {
+  maxAge: '7d',
+  immutable: true,
+}));
 
 // Serve client build in production
-app.use(express.static(path.join(__dirname, '..', 'client', 'dist')));
+app.use(express.static(path.join(__dirname, '..', 'client', 'dist'), {
+  maxAge: '1d',
+  setHeaders: (res, filePath) => {
+    if (filePath.endsWith('.html')) {
+      res.setHeader('Cache-Control', 'no-cache');
+    }
+  },
+}));
 
 // Routes
-app.use('/api/auth', authRoutes);
+app.use('/api/auth', authLimiter, authRoutes);
 app.use('/api/servers', authenticate, serverRoutes);
 app.use('/api/servers', authenticate, channelRoutes);
 app.use('/api/servers', authenticate, roleRoutes);

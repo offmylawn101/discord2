@@ -5,6 +5,7 @@ const path = require('path');
 const db = require('../models/database');
 const { authenticate } = require('../middleware/auth');
 const { PERMISSIONS, checkPermission } = require('../utils/permissions');
+const { messageLimiter, searchLimiter } = require('../middleware/rateLimit');
 
 const router = express.Router();
 
@@ -102,7 +103,7 @@ router.get('/:channelId/messages', authenticate, async (req, res) => {
 });
 
 // Send message
-router.post('/:channelId/messages', authenticate, upload.array('files', 10), async (req, res) => {
+router.post('/:channelId/messages', authenticate, messageLimiter, upload.array('files', 10), async (req, res) => {
   try {
     const { channelId } = req.params;
     const { content, reply_to_id, type = 'default' } = req.body;
@@ -279,7 +280,7 @@ router.get('/:channelId/pins', authenticate, async (req, res) => {
 });
 
 // Search messages in channel
-router.get('/:channelId/messages/search', authenticate, async (req, res) => {
+router.get('/:channelId/messages/search', authenticate, searchLimiter, async (req, res) => {
   try {
     const { channelId } = req.params;
     const { q } = req.query;
