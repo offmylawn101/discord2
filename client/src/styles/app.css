@@ -538,6 +538,7 @@ body {
 .message-input-container {
   padding: 0 16px 24px;
   flex-shrink: 0;
+  position: relative;
 }
 .reply-bar {
   display: flex;

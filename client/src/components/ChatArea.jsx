@@ -10,6 +10,7 @@ export default function ChatArea() {
   const {
     currentChannel, messages, loadingMessages, sendMessage,
     replyingTo, setReplyingTo, user, typingUsers, toggleInviteModal,
+    members,
   } = useStore();
   const [content, setContent] = useState('');
   const [files, setFiles] = useState([]);
@@ -19,6 +20,10 @@ export default function ChatArea() {
   const [showMembers, setShowMembers] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
+  const [mentionQuery, setMentionQuery] = useState('');
+  const [showMentionPicker, setShowMentionPicker] = useState(false);
+  const [mentionIndex, setMentionIndex] = useState(0);
+  const mentionStartPos = useRef(null);
   const messagesEndRef = useRef(null);
   const messagesAreaRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -114,6 +119,32 @@ export default function ChatArea() {
   };
 
   const handleKeyDown = (e) => {
+    // Mention picker keyboard navigation
+    if (showMentionPicker && filteredMembers.length > 0) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setMentionIndex(prev => (prev + 1) % filteredMembers.length);
+        return;
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setMentionIndex(prev => (prev - 1 + filteredMembers.length) % filteredMembers.length);
+        return;
+      }
+      if (e.key === 'Enter' || e.key === 'Tab') {
+        e.preventDefault();
+        insertMention(filteredMembers[mentionIndex]);
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        setShowMentionPicker(false);
+        setMentionQuery('');
+        mentionStartPos.current = null;
+        return;
+      }
+    }
+
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSend();
@@ -188,6 +219,73 @@ export default function ChatArea() {
     if (updatedMsg) socket?.emit('message_update', updatedMsg);
     setEditingId(null);
     setEditContent('');
+  };
+
+  // Mention picker: compute filtered members
+  const specialItems = [
+    { id: '__everyone__', username: 'everyone', special: true },
+    { id: '__here__', username: 'here', special: true },
+  ];
+  const filteredMembers = (() => {
+    if (!showMentionPicker) return [];
+    const q = mentionQuery.toLowerCase();
+    const specials = specialItems.filter(s =>
+      !q || s.username.startsWith(q)
+    );
+    const memberResults = (members || []).filter(m =>
+      m.id !== user?.id && (
+        !q ||
+        m.username?.toLowerCase().includes(q) ||
+        m.nickname?.toLowerCase().includes(q)
+      )
+    ).slice(0, 10);
+    return [...specials, ...memberResults];
+  })();
+
+  const handleContentChange = (e) => {
+    const value = e.target.value;
+    const cursorPos = e.target.selectionStart;
+    setContent(value);
+
+    // Detect @ mention trigger
+    const textBeforeCursor = value.slice(0, cursorPos);
+    const atMatch = textBeforeCursor.match(/@([^\s@]*)$/);
+    if (atMatch) {
+      setShowMentionPicker(true);
+      setMentionQuery(atMatch[1]);
+      setMentionIndex(0);
+      mentionStartPos.current = cursorPos - atMatch[0].length;
+    } else {
+      setShowMentionPicker(false);
+      setMentionQuery('');
+      mentionStartPos.current = null;
+    }
+  };
+
+  const insertMention = (member) => {
+    const ta = textareaRef.current;
+    if (!ta || mentionStartPos.current === null) return;
+    const before = content.slice(0, mentionStartPos.current);
+    const after = content.slice(ta.selectionStart);
+    let insertion;
+    if (member.special) {
+      insertion = `@${member.username} `;
+    } else {
+      insertion = `<@${member.id}> `;
+    }
+    const newContent = before + insertion + after;
+    setContent(newContent);
+    setShowMentionPicker(false);
+    setMentionQuery('');
+    mentionStartPos.current = null;
+    // Focus and set cursor position after insertion
+    requestAnimationFrame(() => {
+      if (ta) {
+        const pos = before.length + insertion.length;
+        ta.focus();
+        ta.setSelectionRange(pos, pos);
+      }
+    });
   };
 
   // Auto-resize textarea
@@ -341,6 +439,45 @@ export default function ChatArea() {
           </div>
         )}
 
+        {showMentionPicker && (
+          <div style={{
+            position: 'absolute', bottom: '100%', left: 0, right: 0,
+            background: 'var(--bg-floating)', borderRadius: 8, padding: 4,
+            maxHeight: 200, overflowY: 'auto', boxShadow: '0 0 16px rgba(0,0,0,.3)',
+            marginBottom: 4, zIndex: 100,
+          }}>
+            <div style={{ padding: '4px 8px', fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>
+              Members
+            </div>
+            {filteredMembers.map((m, i) => (
+              <div
+                key={m.id}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px',
+                  borderRadius: 4, cursor: 'pointer',
+                  background: i === mentionIndex ? 'var(--bg-modifier-selected)' : 'transparent',
+                }}
+                onClick={() => insertMention(m)}
+                onMouseEnter={() => setMentionIndex(i)}
+              >
+                <div style={{
+                  width: 24, height: 24, borderRadius: '50%',
+                  background: m.special ? 'var(--brand-500)' : `hsl(${(m.id || '').split('').reduce((a, c) => a + c.charCodeAt(0), 0) % 360}, 60%, 50%)`,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 600, flexShrink: 0,
+                  color: 'white',
+                }}>
+                  {m.special ? '@' : m.avatar ? <img src={`/uploads/${m.avatar}`} style={{ width: 24, height: 24, borderRadius: '50%' }} /> : m.username?.[0]?.toUpperCase()}
+                </div>
+                <span style={{ fontWeight: 500 }}>{m.nickname || m.username}</span>
+                {!m.special && m.discriminator && <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>#{m.discriminator}</span>}
+              </div>
+            ))}
+            {filteredMembers.length === 0 && (
+              <div style={{ padding: '8px', fontSize: 13, color: 'var(--text-muted)' }}>No members found</div>
+            )}
+          </div>
+        )}
+
         <div className="message-input-wrapper">
           <button className="attach-btn" onClick={() => fileInputRef.current?.click()} title="Attach files">
             +
@@ -351,7 +488,7 @@ export default function ChatArea() {
             className="message-input"
             placeholder={`Message ${currentChannel?.type === 'dm' ? '@' : '#'}${channelName}`}
             value={content}
-            onChange={e => setContent(e.target.value)}
+            onChange={handleContentChange}
             onKeyDown={handleKeyDown}
             onPaste={handlePaste}
             rows={1}
