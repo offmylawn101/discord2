@@ -7,8 +7,11 @@ export default function ProfileCard({ userId, position, onClose }) {
   const [profile, setProfile] = useState(null);
   const [userRoles, setUserRoles] = useState([]);
   const [cardStyle, setCardStyle] = useState({ visibility: 'hidden' });
+  const [editingNickname, setEditingNickname] = useState(false);
+  const [nicknameInput, setNicknameInput] = useState('');
+  const [nicknameSaving, setNicknameSaving] = useState(false);
   const cardRef = useRef(null);
-  const { roles, members, currentServer, openDm, user } = useStore();
+  const { roles, members, currentServer, openDm, user, setNickname } = useStore();
 
   useEffect(() => {
     api.get(`/users/${userId}`).then(setProfile).catch(() => {});
@@ -62,6 +65,37 @@ export default function ProfileCard({ userId, position, onClose }) {
 
   if (!profile) return null;
 
+  const member = members.find(m => m.id === userId);
+  const nickname = member?.nickname;
+  const isSelf = userId === user?.id;
+  const isInServer = !!currentServer;
+
+  const handleNicknameEdit = () => {
+    setNicknameInput(nickname || '');
+    setEditingNickname(true);
+  };
+
+  const handleNicknameSave = async () => {
+    if (!currentServer) return;
+    setNicknameSaving(true);
+    try {
+      await setNickname(currentServer.id, userId, nicknameInput.trim() || null);
+      setEditingNickname(false);
+    } catch (err) {
+      console.error('Nickname save error:', err);
+    }
+    setNicknameSaving(false);
+  };
+
+  const handleNicknameKeyDown = (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      handleNicknameSave();
+    } else if (e.key === 'Escape') {
+      setEditingNickname(false);
+    }
+  };
+
   const avatarColor = `hsl(${(userId || '').split('').reduce((a, c) => a + c.charCodeAt(0), 0) % 360}, 60%, 50%)`;
   const bannerColor = profile.banner_color || avatarColor;
 
@@ -78,12 +112,68 @@ export default function ProfileCard({ userId, position, onClose }) {
         </div>
       </div>
       <div className="profile-body">
-        <div className="profile-username">{profile.username}</div>
-        <div className="profile-tag">#{profile.discriminator}</div>
+        {nickname && (
+          <div className="profile-username">{nickname}</div>
+        )}
+        <div className={nickname ? 'profile-tag' : 'profile-username'}>
+          {nickname ? `${profile.username}#${profile.discriminator}` : profile.username}
+        </div>
+        {!nickname && (
+          <div className="profile-tag">#{profile.discriminator}</div>
+        )}
 
         {profile.custom_status && (
           <div style={{ fontSize: 13, color: 'var(--text-normal)', marginTop: 4 }}>
             {profile.custom_status}
+          </div>
+        )}
+
+        {isInServer && (
+          <div className="profile-section">
+            <div className="profile-section-title" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <span>Server Nickname</span>
+              {isSelf && !editingNickname && (
+                <span
+                  style={{ cursor: 'pointer', color: 'var(--text-link)', fontSize: 11, fontWeight: 500, textTransform: 'none' }}
+                  onClick={handleNicknameEdit}
+                >
+                  Edit
+                </span>
+              )}
+            </div>
+            {editingNickname ? (
+              <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                <input
+                  className="form-input"
+                  value={nicknameInput}
+                  onChange={e => setNicknameInput(e.target.value)}
+                  onKeyDown={handleNicknameKeyDown}
+                  placeholder={profile.username}
+                  maxLength={32}
+                  autoFocus
+                  style={{ fontSize: 13, padding: '4px 8px', flex: 1 }}
+                />
+                <button
+                  className="btn btn-primary"
+                  onClick={handleNicknameSave}
+                  disabled={nicknameSaving}
+                  style={{ fontSize: 12, padding: '4px 8px' }}
+                >
+                  {nicknameSaving ? '...' : 'Save'}
+                </button>
+                <button
+                  className="btn"
+                  onClick={() => setEditingNickname(false)}
+                  style={{ fontSize: 12, padding: '4px 8px', background: 'var(--bg-tertiary)' }}
+                >
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              <div style={{ fontSize: 13, color: 'var(--text-normal)' }}>
+                {nickname || <span style={{ color: 'var(--text-muted)', fontStyle: 'italic' }}>No nickname set</span>}
+              </div>
+            )}
           </div>
         )}
 
