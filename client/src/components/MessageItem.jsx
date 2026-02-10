@@ -69,6 +69,19 @@ export default function MessageItem({
     setShowProfile({ x: rect.right + 8, y: rect.top, anchorLeft: rect.left });
   };
 
+  const handleCreateThread = async () => {
+    const { createThread, currentChannel } = useStore.getState();
+    if (currentChannel) {
+      const threadName = message.content?.slice(0, 40) || 'Thread';
+      await createThread(currentChannel.id, message.id, threadName);
+    }
+  };
+
+  const handleOpenThread = () => {
+    const { openThread } = useStore.getState();
+    openThread({ id: message.thread_id, parent_message_id: message.id, channel_id: message.channel_id });
+  };
+
   const avatarColor = `hsl(${(message.author_id || '').split('').reduce((a, c) => a + c.charCodeAt(0), 0) % 360}, 60%, 50%)`;
 
   return (
@@ -140,6 +153,21 @@ export default function MessageItem({
           <div className="message-content">
             {renderMarkdown(message.content)}
             {message.edited_at && <span className="edited"> (edited)</span>}
+          </div>
+        )}
+
+        {/* Thread indicator */}
+        {message.thread_id && (
+          <div
+            style={{
+              display: 'flex', alignItems: 'center', gap: 6, marginTop: 4,
+              padding: '4px 0', cursor: 'pointer', fontSize: 13, color: 'var(--text-link)',
+              fontWeight: 500,
+            }}
+            onClick={handleOpenThread}
+          >
+            <span style={{ fontSize: 14 }}>&#x1F9F5;</span>
+            <span>View Thread</span>
           </div>
         )}
 
@@ -221,6 +249,12 @@ export default function MessageItem({
       <div className="message-actions">
         <button className="message-action-btn" onClick={() => setShowEmoji(!showEmoji)} title="Add Reaction">😀</button>
         <button className="message-action-btn" onClick={() => onReply(message)} title="Reply">↩</button>
+        {!message.thread_id && (
+          <button className="message-action-btn" onClick={handleCreateThread} title="Create Thread">&#x1F9F5;</button>
+        )}
+        {message.thread_id && (
+          <button className="message-action-btn" onClick={handleOpenThread} title="View Thread">&#x1F9F5;</button>
+        )}
         {message.author_id === currentUserId && (
           <button className="message-action-btn" onClick={() => onEdit(message)} title="Edit">✏</button>
         )}
