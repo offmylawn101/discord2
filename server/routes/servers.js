@@ -10,6 +10,8 @@ const { logAudit, AUDIT_ACTIONS } = require('../utils/auditLog');
 
 const router = express.Router();
 
+const fs = require('fs');
+
 // Server icon upload setup
 const iconStorage = multer.diskStorage({
   destination: path.join(__dirname, '..', '..', 'uploads', 'icons'),
@@ -19,6 +21,27 @@ const iconUpload = multer({ storage: iconStorage, limits: { fileSize: 8 * 1024 *
   if (file.mimetype.startsWith('image/')) cb(null, true);
   else cb(new Error('Only images are allowed'));
 }});
+
+// Emoji upload setup
+const emojiDir = path.join(__dirname, '..', '..', 'uploads', 'emojis');
+if (!fs.existsSync(emojiDir)) fs.mkdirSync(emojiDir, { recursive: true });
+
+const emojiStorage = multer.diskStorage({
+  destination: emojiDir,
+  filename: (req, file, cb) => {
+    const emojiId = uuidv4();
+    req.emojiId = emojiId;
+    cb(null, `${emojiId}${path.extname(file.originalname)}`);
+  },
+});
+const emojiUpload = multer({
+  storage: emojiStorage,
+  limits: { fileSize: 256 * 1024 }, // 256KB max
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype.startsWith('image/')) cb(null, true);
+    else cb(new Error('Only image files are allowed for emojis'));
+  },
+});
 
 // Create server
 router.post('/', authenticate, async (req, res) => {
@@ -143,7 +166,9 @@ router.get('/:serverId', authenticate, async (req, res) => {
       m.roles = memberRoles.map(r => r.role_id);
     }
 
-    const responseData = { ...server, channels, categories, roles, members };
+    const emojis = await db.all('SELECT * FROM server_emojis WHERE server_id = ? ORDER BY created_at', [serverId]);
+
+    const responseData = { ...server, channels, categories, roles, members, emojis };
     await cache.set(cacheKey, responseData, 60); // 1 minute TTL
     res.json(responseData);
   } catch (err) {
@@ -468,6 +493,123 @@ router.get('/:serverId/audit-log', authenticate, async (req, res) => {
     res.json(entries);
   } catch (err) {
     console.error('Audit log error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ============ Emoji Endpoints ============
+
+// Get server emojis
+router.get('/:serverId/emojis', authenticate, async (req, res) => {
+  try {
+    const { serverId } = req.params;
+    const member = await db.get('SELECT 1 FROM server_members WHERE server_id = ? AND user_id = ?', [serverId, req.userId]);
+    if (!member) return res.status(403).json({ error: 'Not a member' });
+
+    const emojis = await db.all('SELECT * FROM server_emojis WHERE server_id = ? ORDER BY created_at', [serverId]);
+    res.json(emojis);
+  } catch (err) {
+    console.error('Get emojis error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Upload new emoji
+router.post('/:serverId/emojis', authenticate, emojiUpload.single('image'), async (req, res) => {
+  try {
+    const { serverId } = req.params;
+    if (!await checkPermission(db, req.userId, serverId, null, PERMISSIONS.MANAGE_SERVER)) {
+      // Clean up uploaded file if permission denied
+      if (req.file) fs.unlinkSync(req.file.path);
+      return res.status(403).json({ error: 'Missing MANAGE_SERVER permission' });
+    }
+
+    if (!req.file) return res.status(400).json({ error: 'No image provided' });
+
+    const name = (req.body.name || '').trim().replace(/[^a-zA-Z0-9_]/g, '');
+    if (!name || name.length < 2 || name.length > 32) {
+      fs.unlinkSync(req.file.path);
+      return res.status(400).json({ error: 'Emoji name must be 2-32 alphanumeric characters' });
+    }
+
+    // Check for duplicate name in this server
+    const existing = await db.get('SELECT id FROM server_emojis WHERE server_id = ? AND name = ?', [serverId, name]);
+    if (existing) {
+      fs.unlinkSync(req.file.path);
+      return res.status(400).json({ error: 'An emoji with this name already exists' });
+    }
+
+    const emojiId = req.emojiId;
+    const imageUrl = `/uploads/emojis/${req.file.filename}`;
+    const animated = req.file.mimetype === 'image/gif' ? 1 : 0;
+
+    await db.run(
+      'INSERT INTO server_emojis (id, server_id, name, image_url, uploader_id, animated) VALUES (?, ?, ?, ?, ?, ?)',
+      [emojiId, serverId, name, imageUrl, req.userId, animated]
+    );
+
+    await cache.del(`server:${serverId}:detail`);
+
+    const emoji = await db.get('SELECT * FROM server_emojis WHERE id = ?', [emojiId]);
+    res.status(201).json(emoji);
+  } catch (err) {
+    console.error('Upload emoji error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Rename emoji
+router.patch('/:serverId/emojis/:emojiId', authenticate, async (req, res) => {
+  try {
+    const { serverId, emojiId } = req.params;
+    if (!await checkPermission(db, req.userId, serverId, null, PERMISSIONS.MANAGE_SERVER)) {
+      return res.status(403).json({ error: 'Missing MANAGE_SERVER permission' });
+    }
+
+    const emoji = await db.get('SELECT * FROM server_emojis WHERE id = ? AND server_id = ?', [emojiId, serverId]);
+    if (!emoji) return res.status(404).json({ error: 'Emoji not found' });
+
+    const name = (req.body.name || '').trim().replace(/[^a-zA-Z0-9_]/g, '');
+    if (!name || name.length < 2 || name.length > 32) {
+      return res.status(400).json({ error: 'Emoji name must be 2-32 alphanumeric characters' });
+    }
+
+    // Check for duplicate name
+    const duplicate = await db.get('SELECT id FROM server_emojis WHERE server_id = ? AND name = ? AND id != ?', [serverId, name, emojiId]);
+    if (duplicate) return res.status(400).json({ error: 'An emoji with this name already exists' });
+
+    await db.run('UPDATE server_emojis SET name = ? WHERE id = ?', [name, emojiId]);
+    await cache.del(`server:${serverId}:detail`);
+
+    const updated = await db.get('SELECT * FROM server_emojis WHERE id = ?', [emojiId]);
+    res.json(updated);
+  } catch (err) {
+    console.error('Rename emoji error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// Delete emoji
+router.delete('/:serverId/emojis/:emojiId', authenticate, async (req, res) => {
+  try {
+    const { serverId, emojiId } = req.params;
+    if (!await checkPermission(db, req.userId, serverId, null, PERMISSIONS.MANAGE_SERVER)) {
+      return res.status(403).json({ error: 'Missing MANAGE_SERVER permission' });
+    }
+
+    const emoji = await db.get('SELECT * FROM server_emojis WHERE id = ? AND server_id = ?', [emojiId, serverId]);
+    if (!emoji) return res.status(404).json({ error: 'Emoji not found' });
+
+    // Delete the file
+    const filePath = path.join(__dirname, '..', '..', emoji.image_url);
+    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+
+    await db.run('DELETE FROM server_emojis WHERE id = ?', [emojiId]);
+    await cache.del(`server:${serverId}:detail`);
+
+    res.json({ deleted: true });
+  } catch (err) {
+    console.error('Delete emoji error:', err);
     res.status(500).json({ error: 'Internal server error' });
   }
 });
