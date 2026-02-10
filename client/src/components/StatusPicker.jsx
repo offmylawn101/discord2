@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useStore } from '../store';
 import { api } from '../utils/api';
 import { getSocket } from '../utils/socket';
+import { setIdlePreviousStatus } from '../utils/idle';
 
 const STATUSES = [
   { value: 'online', label: 'Online', color: '#23a559', desc: '' },
@@ -33,6 +34,10 @@ export default function StatusPicker({ onClose }) {
       setUser({ ...user, status });
       const socket = getSocket();
       socket?.emit('status_change', status);
+      // Track this as the user's intentional status for idle detection
+      if (status !== 'idle') {
+        setIdlePreviousStatus(status);
+      }
       onClose();
     } catch (err) {
       console.error(err);
