@@ -1,6 +1,9 @@
 import React, { useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useStore } from '../store';
+import { onConnectionStateChange } from '../utils/socket';
+import { getSocket } from '../utils/socket';
+import { requestNotificationPermission } from '../utils/notifications';
 import ServerList from './ServerList';
 import Sidebar from './Sidebar';
 import ChatArea from './ChatArea';
@@ -15,9 +18,34 @@ export default function MainLayout() {
   const {
     currentServer, currentChannel, fetchServers, selectServer,
     showCreateServer, showInviteModal, showServerSettings, showSettings,
-    fetchDms, fetchRelationships,
+    fetchDms, fetchRelationships, setConnectionState,
   } = useStore();
+  const connectionState = useStore(s => s.connectionState);
   const navigate = useNavigate();
+
+  // Track connection state
+  useEffect(() => {
+    const unsubscribe = onConnectionStateChange((state) => {
+      setConnectionState(state);
+    });
+    return unsubscribe;
+  }, []);
+
+  // Handle missed messages from reconnection
+  useEffect(() => {
+    const socket = getSocket();
+    if (!socket) return;
+
+    const handleMissedMessages = (data) => {
+      const { addMessage } = useStore.getState();
+      for (const msg of (data.messages || [])) {
+        addMessage(msg);
+      }
+    };
+
+    socket.on('missed_messages', handleMissedMessages);
+    return () => socket.off('missed_messages', handleMissedMessages);
+  }, []);
 
   // Parse route: /channels/@me or /channels/:serverId/:channelId
   const path = window.location.pathname;
@@ -31,6 +59,11 @@ export default function MainLayout() {
     fetchRelationships();
   }, []);
 
+  // Request notification permission on mount
+  useEffect(() => {
+    requestNotificationPermission();
+  }, []);
+
   useEffect(() => {
     if (routeServerId && routeServerId !== currentServer?.id) {
       selectServer(routeServerId).catch(() => navigate('/channels/@me'));
@@ -41,6 +74,7 @@ export default function MainLayout() {
 
   return (
     <div className="app">
+      {connectionState !== 'connected' && <ConnectionBanner state={connectionState} />}
       <ServerList />
       <Sidebar isHome={isHome} />
       {isHome && !currentChannel ? (
@@ -62,6 +96,24 @@ export default function MainLayout() {
       {showInviteModal && <InviteModal />}
       {showServerSettings && <ServerSettings />}
       {showSettings && <UserSettings />}
+    </div>
+  );
+}
+
+function ConnectionBanner({ state }) {
+  return (
+    <div style={{
+      position: 'fixed', top: 0, left: 0, right: 0, zIndex: 9999,
+      background: state === 'connecting' ? '#FAA61A' : '#ED4245',
+      color: 'white', padding: '6px 0', textAlign: 'center',
+      fontSize: 13, fontWeight: 600,
+      animation: 'fadeIn 0.2s ease',
+    }}>
+      {state === 'connecting' ? (
+        <span>Reconnecting...</span>
+      ) : (
+        <span>Connection lost. Attempting to reconnect...</span>
+      )}
     </div>
   );
 }

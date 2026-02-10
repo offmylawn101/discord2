@@ -1,29 +1,7 @@
 import { create } from 'zustand';
 import { api } from './utils/api';
 import { getSocket } from './utils/socket';
-
-// Notification sound
-let notifAudio = null;
-function playNotificationSound() {
-  try {
-    if (!notifAudio) {
-      notifAudio = new Audio('data:audio/wav;base64,UklGRl9vT19teleXNpcyBpcyBub3QgYSByZWFsIHdhdiBmaWxl');
-      // Use a simple oscillator beep instead
-      const ctx = new (window.AudioContext || window.webkitAudioContext)();
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.frequency.value = 800;
-      gain.gain.value = 0.1;
-      osc.start();
-      osc.stop(ctx.currentTime + 0.15);
-      return;
-    }
-    notifAudio.currentTime = 0;
-    notifAudio.play().catch(() => {});
-  } catch {}
-}
+import { playMessageSound, playMentionSound, showNotification, updateTitleBadge } from './utils/notifications';
 
 export const useStore = create((set, get) => ({
   // Auth
@@ -70,7 +48,11 @@ export const useStore = create((set, get) => ({
   showInviteModal: false,
   replyingTo: null,
   typingUsers: {},
+  // Notification settings
   notificationsEnabled: true,
+  desktopNotifications: true,
+  soundEnabled: true,
+  mentionNotifications: true, // Always notify on mentions even if other notifs disabled
 
   // Auth actions
   setUser: (user) => set({ user }),
@@ -128,6 +110,12 @@ export const useStore = create((set, get) => ({
       delete unreadChannels[channel.id];
       return { unreadChannels };
     });
+    // Update title badge
+    setTimeout(() => {
+      const state = get();
+      const remaining = Object.values(state.unreadChannels).reduce((sum, ch) => sum + (ch.count || 0), 0);
+      updateTitleBadge(remaining);
+    }, 0);
     // Join socket room for this channel (leave previous)
     const socket = getSocket();
     if (socket) {
@@ -226,9 +214,34 @@ export const useStore = create((set, get) => ({
         return { unreadChannels, unreadServers };
       });
 
-      // Play notification sound
-      if (state.notificationsEnabled && message.author_id !== state.user?.id) {
-        playNotificationSound();
+      // Notifications
+      if (message.author_id !== state.user?.id) {
+        const isMentioned = message.mentions && message.mentions.includes(state.user?.id);
+
+        // Sound
+        if (state.soundEnabled) {
+          if (isMentioned) {
+            playMentionSound();
+          } else if (state.notificationsEnabled) {
+            playMessageSound();
+          }
+        }
+
+        // Desktop notification
+        if (state.desktopNotifications && (state.notificationsEnabled || (state.mentionNotifications && isMentioned))) {
+          const channelName = message.channel_name || message.channel_id?.slice(0, 8);
+          showNotification(
+            isMentioned ? `${message.username} mentioned you` : message.username,
+            {
+              body: message.content?.slice(0, 100) || '(attachment)',
+              tag: `msg-${message.channel_id}`, // Group by channel
+            }
+          );
+        }
+
+        // Update title badge
+        const totalUnread = Object.values(get().unreadChannels).reduce((sum, ch) => sum + (ch.count || 0), 0) + 1;
+        updateTitleBadge(totalUnread);
       }
     }
   },

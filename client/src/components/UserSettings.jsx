@@ -216,17 +216,7 @@ export default function UserSettings() {
         {tab === 'notifications' && (
           <>
             <div className="settings-title">Notifications</div>
-            <div className="form-group">
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 15, color: 'var(--text-normal)', cursor: 'pointer' }}>
-                <input
-                  type="checkbox"
-                  checked={useStore.getState().notificationsEnabled}
-                  onChange={e => useStore.setState({ notificationsEnabled: e.target.checked })}
-                  style={{ width: 18, height: 18 }}
-                />
-                Enable notification sounds
-              </label>
-            </div>
+            <NotificationSettings />
           </>
         )}
 
@@ -260,6 +250,85 @@ export default function UserSettings() {
           <button className="btn btn-secondary" onClick={toggleSettings}>Cancel</button>
         </div>
       </div>
+    </div>
+  );
+}
+
+function NotificationSettings() {
+  const {
+    notificationsEnabled, desktopNotifications, soundEnabled, mentionNotifications
+  } = useStore();
+  const store = useStore;
+
+  const requestPerms = async () => {
+    const { requestNotificationPermission } = await import('../utils/notifications');
+    const granted = await requestNotificationPermission();
+    if (!granted) {
+      alert('Notification permission was denied. Please enable it in your browser settings.');
+    }
+  };
+
+  const toggleSetting = (key) => {
+    store.setState({ [key]: !store.getState()[key] });
+  };
+
+  const settingRow = (label, description, key, value) => (
+    <div style={{
+      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+      padding: '16px 0', borderBottom: '1px solid var(--bg-modifier-active)',
+    }}>
+      <div>
+        <div style={{ fontWeight: 500, color: 'var(--header-primary)', fontSize: 15 }}>{label}</div>
+        <div style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 2 }}>{description}</div>
+      </div>
+      <div
+        onClick={() => toggleSetting(key)}
+        style={{
+          width: 44, height: 24, borderRadius: 12, cursor: 'pointer',
+          background: value ? '#57F287' : 'var(--bg-tertiary)',
+          position: 'relative', transition: 'background 0.15s',
+        }}
+      >
+        <div style={{
+          width: 20, height: 20, borderRadius: '50%', background: 'white',
+          position: 'absolute', top: 2,
+          left: value ? 22 : 2,
+          transition: 'left 0.15s', boxShadow: '0 1px 3px rgba(0,0,0,0.3)',
+        }} />
+      </div>
+    </div>
+  );
+
+  return (
+    <div>
+      <button className="btn btn-primary" onClick={requestPerms} style={{ marginBottom: 16 }}>
+        Enable Desktop Notifications
+      </button>
+
+      {settingRow(
+        'Enable Notifications',
+        'Receive notifications for all new messages',
+        'notificationsEnabled',
+        notificationsEnabled
+      )}
+      {settingRow(
+        'Desktop Notifications',
+        'Show browser desktop notifications for new messages',
+        'desktopNotifications',
+        desktopNotifications
+      )}
+      {settingRow(
+        'Notification Sounds',
+        'Play a sound when receiving messages',
+        'soundEnabled',
+        soundEnabled
+      )}
+      {settingRow(
+        'Always Notify on Mentions',
+        'Always receive notifications when you are @mentioned, even if other notifications are disabled',
+        'mentionNotifications',
+        mentionNotifications
+      )}
     </div>
   );
 }
