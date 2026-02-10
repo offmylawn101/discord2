@@ -717,6 +717,57 @@ router.delete('/:serverId/emojis/:emojiId', authenticate, async (req, res) => {
   }
 });
 
+// Get server statistics
+router.get('/:serverId/stats', authenticate, async (req, res) => {
+  try {
+    const { serverId } = req.params;
+
+    // Verify membership or ownership
+    const member = await db.get('SELECT 1 FROM server_members WHERE server_id = ? AND user_id = ?', [serverId, req.userId]);
+    if (!member) {
+      const server = await db.get('SELECT owner_id FROM servers WHERE id = ?', [serverId]);
+      if (!server || server.owner_id !== req.userId) {
+        return res.status(403).json({ error: 'Not a member of this server' });
+      }
+    }
+
+    const oneDayAgo = db.isPg ? "NOW() - INTERVAL '1 day'" : "datetime('now', '-1 day')";
+    const sevenDaysAgo = db.isPg ? "NOW() - INTERVAL '7 days'" : "datetime('now', '-7 days')";
+    const dateFunc = db.isPg ? 'DATE(joined_at)' : 'DATE(joined_at)';
+
+    const [memberCount, onlineCount, channelCount, roleCount, messageCount, messagesToday, messagesThisWeek, topChannels, topPosters, recentGrowth, serverInfo] = await Promise.all([
+      db.get('SELECT COUNT(*) as count FROM server_members WHERE server_id = ?', [serverId]),
+      db.get(`SELECT COUNT(*) as count FROM server_members sm JOIN users u ON sm.user_id = u.id WHERE sm.server_id = ? AND u.status != 'offline'`, [serverId]),
+      db.get('SELECT COUNT(*) as count FROM channels WHERE server_id = ?', [serverId]),
+      db.get('SELECT COUNT(*) as count FROM roles WHERE server_id = ?', [serverId]),
+      db.get('SELECT COUNT(*) as count FROM messages m JOIN channels c ON m.channel_id = c.id WHERE c.server_id = ?', [serverId]),
+      db.get(`SELECT COUNT(*) as count FROM messages m JOIN channels c ON m.channel_id = c.id WHERE c.server_id = ? AND m.created_at > ${oneDayAgo}`, [serverId]),
+      db.get(`SELECT COUNT(*) as count FROM messages m JOIN channels c ON m.channel_id = c.id WHERE c.server_id = ? AND m.created_at > ${sevenDaysAgo}`, [serverId]),
+      db.all(`SELECT c.id, c.name, COUNT(m.id) as messageCount FROM channels c LEFT JOIN messages m ON m.channel_id = c.id WHERE c.server_id = ? GROUP BY c.id ORDER BY messageCount DESC LIMIT 5`, [serverId]),
+      db.all(`SELECT u.id, u.username, u.avatar, COUNT(m.id) as messageCount FROM messages m JOIN channels c ON m.channel_id = c.id JOIN users u ON m.author_id = u.id WHERE c.server_id = ? GROUP BY u.id ORDER BY messageCount DESC LIMIT 5`, [serverId]),
+      db.all(`SELECT ${dateFunc} as date, COUNT(*) as joins FROM server_members WHERE server_id = ? AND joined_at > ${sevenDaysAgo} GROUP BY ${dateFunc} ORDER BY date DESC`, [serverId]),
+      db.get('SELECT created_at FROM servers WHERE id = ?', [serverId]),
+    ]);
+
+    res.json({
+      memberCount: memberCount.count,
+      onlineCount: onlineCount.count,
+      channelCount: channelCount.count,
+      roleCount: roleCount.count,
+      messageCount: messageCount.count,
+      messagesToday: messagesToday.count,
+      messagesThisWeek: messagesThisWeek.count,
+      topChannels,
+      topPosters,
+      recentGrowth,
+      createdAt: serverInfo?.created_at || null,
+    });
+  } catch (err) {
+    console.error('Server stats error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // Reorder categories
 router.patch('/:serverId/categories/reorder', authenticate, async (req, res) => {
   try {

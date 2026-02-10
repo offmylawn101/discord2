@@ -5,10 +5,18 @@ import UserProfilePopup from './UserProfilePopup';
 export default function MemberList() {
   const { members, roles, user } = useStore();
   const [profilePopup, setProfilePopup] = useState(null);
+  const [searchQuery, setSearchQuery] = useState('');
+
+  // Filter members based on search query
+  const filteredMembers = members.filter(m => {
+    if (!searchQuery) return true;
+    const q = searchQuery.toLowerCase();
+    return m.username?.toLowerCase().includes(q) || m.nickname?.toLowerCase().includes(q);
+  });
 
   // Group members by online/offline and roles
-  const onlineMembers = members.filter(m => m.status !== 'offline');
-  const offlineMembers = members.filter(m => m.status === 'offline');
+  const onlineMembers = filteredMembers.filter(m => m.status !== 'offline');
+  const offlineMembers = filteredMembers.filter(m => m.status === 'offline');
 
   // Group by highest role
   const hoistRoles = roles.filter(r => r.hoist && !r.is_default).sort((a, b) => b.position - a.position);
@@ -31,6 +39,23 @@ export default function MemberList() {
 
   return (
     <div className="member-list">
+      <div className="member-search">
+        <svg className="member-search-icon" width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M21.707 20.293l-5.395-5.396A7.946 7.946 0 0018 10c0-4.411-3.589-8-8-8s-8 3.589-8 8 3.589 8 8 8a7.946 7.946 0 004.897-1.688l5.396 5.395a.997.997 0 001.414 0 .999.999 0 000-1.414zM10 16c-3.309 0-6-2.691-6-6s2.691-6 6-6 6 2.691 6 6-2.691 6-6 6z"/>
+        </svg>
+        <input
+          className="member-search-input"
+          placeholder="Search members"
+          value={searchQuery}
+          onChange={e => setSearchQuery(e.target.value)}
+        />
+        {searchQuery && (
+          <button className="member-search-clear" onClick={() => setSearchQuery('')}>&#x2715;</button>
+        )}
+      </div>
+      {searchQuery && (
+        <div className="member-search-count">{filteredMembers.length} member{filteredMembers.length !== 1 ? 's' : ''} found</div>
+      )}
       {/* Hoisted role groups */}
       {hoistRoles.map(role => {
         const group = grouped[role.id];

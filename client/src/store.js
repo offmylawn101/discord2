@@ -61,6 +61,13 @@ export const useStore = create((set, get) => ({
   readStates: {}, // { channelId: lastReadMessageId }
   lastReadMessageId: null, // for current channel - the message ID that was last read before opening
 
+  // Appearance
+  messageDisplay: localStorage.getItem('messageDisplay') || 'cozy',
+  setMessageDisplay: (mode) => {
+    localStorage.setItem('messageDisplay', mode);
+    set({ messageDisplay: mode });
+  },
+
   // Connection
   connectionState: 'disconnected', // 'connected', 'connecting', 'disconnected'
   setConnectionState: (state) => set({ connectionState: state }),

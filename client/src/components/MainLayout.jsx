@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useStore } from '../store';
 import { onConnectionStateChange } from '../utils/socket';
@@ -20,6 +20,7 @@ import ChannelSettings from './ChannelSettings';
 import EventsPanel from './EventsPanel';
 import ServerDiscovery from './ServerDiscovery';
 import SearchPanel from './SearchPanel';
+import KeyboardShortcuts from './KeyboardShortcuts';
 
 export default function MainLayout() {
   const {
@@ -33,6 +34,7 @@ export default function MainLayout() {
   const showSearchPanel = useStore(s => s.showSearchPanel);
   const showEventsPanel = useStore(s => s.showEventsPanel);
   const showDiscover = useStore(s => s.showDiscover);
+  const [showShortcuts, setShowShortcuts] = useState(false);
   const navigate = useNavigate();
 
   // Track connection state
@@ -183,6 +185,18 @@ export default function MainLayout() {
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [toggleQuickSwitcher]);
 
+  // Global Ctrl+/ / Cmd+/ for Keyboard Shortcuts
+  useEffect(() => {
+    const handleShortcutsKey = (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === '/') {
+        e.preventDefault();
+        setShowShortcuts(s => !s);
+      }
+    };
+    document.addEventListener('keydown', handleShortcutsKey);
+    return () => document.removeEventListener('keydown', handleShortcutsKey);
+  }, []);
+
   useEffect(() => {
     if (routeServerId && routeServerId !== currentServer?.id) {
       selectServer(routeServerId).catch(() => navigate('/channels/@me'));
@@ -224,6 +238,7 @@ export default function MainLayout() {
       {showServerSettings && <ServerSettings />}
       {showSettings && <UserSettings />}
       {showQuickSwitcher && <QuickSwitcher />}
+      {showShortcuts && <KeyboardShortcuts onClose={() => setShowShortcuts(false)} />}
       {showEventsPanel && currentServer && (
         <EventsPanel onClose={() => useStore.setState({ showEventsPanel: false })} />
       )}

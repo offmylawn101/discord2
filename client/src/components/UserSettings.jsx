@@ -3,7 +3,7 @@ import { useStore } from '../store';
 import { api } from '../utils/api';
 
 export default function UserSettings() {
-  const { user, setUser, toggleSettings, logout, uploadAvatar } = useStore();
+  const { user, setUser, toggleSettings, logout, uploadAvatar, messageDisplay, setMessageDisplay } = useStore();
   const [tab, setTab] = useState('account');
   const [username, setUsername] = useState(user?.username || '');
   const [aboutMe, setAboutMe] = useState(user?.about_me || '');
@@ -198,15 +198,36 @@ export default function UserSettings() {
           <>
             <div className="settings-title">Appearance</div>
             <p style={{ color: 'var(--text-muted)', marginBottom: 16 }}>Dark theme is the only theme. As it should be.</p>
-            <div className="form-group">
-              <label className="form-label">Message Display</label>
-              <div style={{ display: 'flex', gap: 12 }}>
-                <div style={{
-                  flex: 1, padding: 16, background: 'var(--bg-secondary)', borderRadius: 8,
-                  border: '2px solid var(--brand-500)', cursor: 'pointer',
-                }}>
-                  <div style={{ fontWeight: 600, color: 'var(--header-primary)', marginBottom: 4 }}>Cozy</div>
-                  <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>Display name and avatar alongside messages</div>
+            <div className="settings-section">
+              <h3 style={{ color: 'var(--header-primary)', fontSize: 16, fontWeight: 600, marginBottom: 4 }}>Message Display</h3>
+              <p style={{ color: 'var(--text-muted)', fontSize: 13, marginBottom: 12 }}>
+                Choose how messages are displayed in chat.
+              </p>
+              <div className="message-display-options">
+                <div
+                  className={`display-option ${messageDisplay === 'cozy' ? 'active' : ''}`}
+                  onClick={() => setMessageDisplay('cozy')}
+                >
+                  <div className="display-option-preview cozy-preview">
+                    <div className="preview-avatar" />
+                    <div className="preview-lines">
+                      <div className="preview-name" />
+                      <div className="preview-text" />
+                      <div className="preview-text short" />
+                    </div>
+                  </div>
+                  <span>Cozy</span>
+                </div>
+                <div
+                  className={`display-option ${messageDisplay === 'compact' ? 'active' : ''}`}
+                  onClick={() => setMessageDisplay('compact')}
+                >
+                  <div className="display-option-preview compact-preview">
+                    <div className="preview-line"><span className="preview-time" /><span className="preview-name-inline" /><span className="preview-text-inline" /></div>
+                    <div className="preview-line"><span className="preview-time" /><span className="preview-text-inline full" /></div>
+                    <div className="preview-line"><span className="preview-time" /><span className="preview-name-inline" /><span className="preview-text-inline" /></div>
+                  </div>
+                  <span>Compact</span>
                 </div>
               </div>
             </div>

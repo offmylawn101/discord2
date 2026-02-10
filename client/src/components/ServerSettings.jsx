@@ -21,8 +21,19 @@ export default function ServerSettings() {
   const [uploadingIcon, setUploadingIcon] = useState(false);
   const [uploadingBanner, setUploadingBanner] = useState(false);
   const [isPublic, setIsPublic] = useState(!!currentServer?.is_public);
+  const [stats, setStats] = useState(null);
+  const [loadingStats, setLoadingStats] = useState(false);
   const [serverDescription, setServerDescription] = useState(currentServer?.description || '');
   const iconInputRef = useRef(null);
+
+  React.useEffect(() => {
+    if (tab === 'statistics' && currentServer?.id) {
+      setLoadingStats(true);
+      api.get(`/servers/${currentServer.id}/stats`)
+        .then(data => { setStats(data); setLoadingStats(false); })
+        .catch(() => setLoadingStats(false));
+    }
+  }, [tab, currentServer?.id]);
 
   const handleUpdateServer = async () => {
     await api.patch(`/servers/${currentServer.id}`, {
@@ -136,6 +147,7 @@ export default function ServerSettings() {
           <button className={`settings-nav-item ${tab === 'events' ? 'active' : ''}`} onClick={() => setTab('events')}>Events</button>
           <button className={`settings-nav-item ${tab === 'automod' ? 'active' : ''}`} onClick={() => setTab('automod')}>AutoMod</button>
           <button className={`settings-nav-item ${tab === 'audit' ? 'active' : ''}`} onClick={() => setTab('audit')}>Audit Log</button>
+          <button className={`settings-nav-item ${tab === 'statistics' ? 'active' : ''}`} onClick={() => setTab('statistics')}>Statistics</button>
         </div>
       </div>
 
@@ -411,6 +423,79 @@ export default function ServerSettings() {
         {tab === 'events' && <ServerEventsManager />}
         {tab === 'automod' && <ServerAutoMod />}
         {tab === 'audit' && <ServerAuditLog />}
+
+        {tab === 'statistics' && (
+          <>
+            <div className="settings-title">Server Statistics</div>
+            {loadingStats ? (
+              <div style={{ color: 'var(--text-muted)', padding: 20 }}>Loading statistics...</div>
+            ) : stats ? (
+              <>
+                <div className="stats-grid">
+                  <div className="stat-card">
+                    <div className="stat-value">{stats.memberCount}</div>
+                    <div className="stat-label">Members</div>
+                    <div className="stat-sub">{stats.onlineCount} online</div>
+                  </div>
+                  <div className="stat-card">
+                    <div className="stat-value">{stats.messageCount.toLocaleString()}</div>
+                    <div className="stat-label">Total Messages</div>
+                  </div>
+                  <div className="stat-card">
+                    <div className="stat-value">{stats.messagesToday}</div>
+                    <div className="stat-label">Messages Today</div>
+                  </div>
+                  <div className="stat-card">
+                    <div className="stat-value">{stats.messagesThisWeek}</div>
+                    <div className="stat-label">This Week</div>
+                  </div>
+                  <div className="stat-card">
+                    <div className="stat-value">{stats.channelCount}</div>
+                    <div className="stat-label">Channels</div>
+                  </div>
+                  <div className="stat-card">
+                    <div className="stat-value">{stats.roleCount}</div>
+                    <div className="stat-label">Roles</div>
+                  </div>
+                </div>
+
+                <h3 style={{ marginTop: 24, marginBottom: 12, color: 'var(--header-primary)' }}>Top Channels</h3>
+                <div className="stats-bar-chart">
+                  {stats.topChannels?.map(ch => (
+                    <div key={ch.id} className="stats-bar-row">
+                      <span className="stats-bar-label">#{ch.name}</span>
+                      <div className="stats-bar-track">
+                        <div
+                          className="stats-bar-fill"
+                          style={{ width: `${(ch.messageCount / Math.max(...stats.topChannels.map(c => c.messageCount), 1)) * 100}%` }}
+                        />
+                      </div>
+                      <span className="stats-bar-value">{ch.messageCount.toLocaleString()}</span>
+                    </div>
+                  ))}
+                </div>
+
+                <h3 style={{ marginTop: 24, marginBottom: 12, color: 'var(--header-primary)' }}>Top Contributors</h3>
+                <div className="stats-posters">
+                  {stats.topPosters?.map((poster, i) => (
+                    <div key={poster.id} className="stats-poster-row">
+                      <span className="stats-poster-rank">#{i + 1}</span>
+                      <div className="stats-poster-avatar" style={{ background: `hsl(${poster.id.split('').reduce((a, c) => a + c.charCodeAt(0), 0) % 360}, 60%, 50%)` }}>
+                        {poster.avatar ? <img src={`/uploads/${poster.avatar}`} alt="" /> : poster.username?.[0]?.toUpperCase()}
+                      </div>
+                      <span className="stats-poster-name">{poster.username}</span>
+                      <span className="stats-poster-count">{poster.messageCount.toLocaleString()} messages</span>
+                    </div>
+                  ))}
+                </div>
+
+                <div style={{ marginTop: 24, color: 'var(--text-muted)', fontSize: 13 }}>
+                  Server created {new Date(stats.createdAt).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
+                </div>
+              </>
+            ) : null}
+          </>
+        )}
       </div>
     </div>
   );

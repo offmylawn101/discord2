@@ -31,6 +31,7 @@ export default function ChatArea() {
     bookmarks, showBookmarks, toggleBookmarksPanel, fetchBookmarks, toggleBookmark,
   } = useStore();
   const lastReadMessageId = useStore(s => s.lastReadMessageId);
+  const messageDisplay = useStore(s => s.messageDisplay);
   const [content, setContent] = useState('');
   const [files, setFiles] = useState([]);
   const [editingId, setEditingId] = useState(null);
@@ -800,7 +801,7 @@ export default function ChatArea() {
       )}
 
       {/* Messages */}
-      <div className="messages-area" ref={messagesAreaRef} onScroll={handleScroll}>
+      <div className={`messages-area ${messageDisplay === 'compact' ? 'compact-mode' : ''}`} ref={messagesAreaRef} onScroll={handleScroll}>
         {loadingMore && (
           <div style={{ textAlign: 'center', padding: 8, color: 'var(--text-muted)', fontSize: 13 }}>
             Loading older messages...
@@ -862,6 +863,7 @@ export default function ChatArea() {
                   onMessageSelect={handleMessageSelect}
                   onJumpToMessage={jumpToMessage}
                   isHighlighted={highlightedMessageId === msg.id}
+                  compact={messageDisplay === 'compact'}
                 />
               </React.Fragment>
             );

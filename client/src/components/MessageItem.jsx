@@ -12,7 +12,7 @@ export default function MessageItem({
   message, showHeader, isEditing, editContent, setEditContent,
   onEditSave, onEditCancel, onEdit, onReply, currentUserId,
   bulkSelectMode, isSelected, onMessageSelect,
-  onJumpToMessage, isHighlighted,
+  onJumpToMessage, isHighlighted, compact,
 }) {
   const [showEmoji, setShowEmoji] = useState(false);
   const [showProfile, setShowProfile] = useState(null);
@@ -183,7 +183,7 @@ export default function MessageItem({
   return (
     <div
       id={`message-${message.id}`}
-      className={`message-group ${showHeader ? 'has-header' : ''} ${bulkSelectMode ? 'bulk-select-active' : ''} ${isSelected ? 'bulk-selected' : ''} ${isHighlighted ? 'message-highlighted' : ''}`}
+      className={`message-group ${showHeader ? 'has-header' : ''} ${compact ? 'compact' : ''} ${bulkSelectMode ? 'bulk-select-active' : ''} ${isSelected ? 'bulk-selected' : ''} ${isHighlighted ? 'message-highlighted' : ''}`}
       data-message-id={message.id}
       onContextMenu={handleContextMenu}
       onClick={handleBulkClick}
@@ -209,7 +209,11 @@ export default function MessageItem({
           </div>
         </div>
       )}
-      {showHeader ? (
+      {compact ? (
+        <span className="compact-timestamp">
+          {new Date(message.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+        </span>
+      ) : showHeader ? (
         <div className="message-avatar" style={{ background: avatarColor }} onClick={bulkSelectMode ? undefined : handleAvatarClick}>
           {message.avatar ? (
             <img src={message.avatar} alt="" style={{ width: '100%', height: '100%', borderRadius: '50%' }} />
@@ -244,17 +248,17 @@ export default function MessageItem({
           </div>
         )}
 
-        {showHeader && (
-          <div className="message-header">
-            <span className="author" style={{ color: avatarColor }} onClick={handleAvatarClick}>
+        {(showHeader || compact) && (
+          <div className="message-header" style={compact ? { display: 'inline' } : undefined}>
+            <span className="author" style={{ color: avatarColor, fontSize: compact ? 13 : undefined }} onClick={handleAvatarClick}>
               {message.nickname || message.username}
             </span>
-            {message.nickname && (
+            {message.nickname && !compact && (
               <span style={{ fontSize: 12, color: 'var(--text-muted)', marginLeft: 4, fontWeight: 400 }} title={`${message.username}#${message.discriminator}`}>
                 {message.username}
               </span>
             )}
-            <span className="timestamp">{formatTime(message.created_at)}</span>
+            {!compact && <span className="timestamp">{formatTime(message.created_at)}</span>}
           </div>
         )}
 
