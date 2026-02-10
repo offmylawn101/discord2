@@ -1,6 +1,68 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { useStore } from '../store';
 
+// Skin tone modifiers
+const SKIN_TONES = [
+  { name: 'Default', modifier: '', color: '#FFCC4D' },
+  { name: 'Light', modifier: '\u{1F3FB}', color: '#FADCBC' },
+  { name: 'Medium-Light', modifier: '\u{1F3FC}', color: '#E0BB95' },
+  { name: 'Medium', modifier: '\u{1F3FD}', color: '#BF8B68' },
+  { name: 'Medium-Dark', modifier: '\u{1F3FE}', color: '#9B643D' },
+  { name: 'Dark', modifier: '\u{1F3FF}', color: '#594539' },
+];
+
+// Base emojis that support skin tone modifiers
+const SKIN_TONE_EMOJIS = new Set([
+  '👋', '🤚', '🖐️', '✋', '🖖', '🫱', '🫲', '🫳', '🫴',
+  '👌', '🤌', '🤏', '✌️', '🤞', '🫰', '🤟', '🤘', '🤙',
+  '👈', '👉', '👆', '🖕', '👇', '☝️', '🫵',
+  '👍', '👎', '✊', '👊', '🤛', '🤜',
+  '👏', '🙌', '🫶', '👐', '🤲', '🤝', '🙏',
+  '✍️', '💅', '🤳', '💪', '🦵', '🦶',
+  '👂', '🦻', '👃',
+  '👶', '🧒', '👦', '👧', '🧑', '👱', '👨', '👩',
+  '🧔', '👴', '👵', '🧓', '👲', '👳', '🧕', '👮',
+  '👷', '💂', '🕵️', '👩‍⚕️', '👨‍⚕️', '👩‍🌾', '👨‍🌾',
+  '👩‍🍳', '👨‍🍳', '👩‍🎓', '👨‍🎓', '👩‍🎤', '👨‍🎤',
+  '👩‍🏫', '👨‍🏫', '👩‍🏭', '👨‍🏭', '👩‍💻', '👨‍💻',
+  '👩‍💼', '👨‍💼', '👩‍🔧', '👨‍🔧', '👩‍🔬', '👨‍🔬',
+  '👩‍🎨', '👨‍🎨', '👩‍🚒', '👨‍🚒', '👩‍✈️', '👨‍✈️',
+  '👩‍🚀', '👨‍🚀', '👩‍⚖️', '👨‍⚖️', '🤶', '🎅',
+  '🦸', '🦹', '🧙', '🧚', '🧛', '🧜', '🧝', '🧞', '🧟',
+  '💆', '💇', '🚶', '🧍', '🧎', '🏃',
+  '💃', '🕺', '🕴️', '🧖', '🧗', '🤸', '🏌️',
+  '🏇', '⛷️', '🏂', '🏋️', '🤼', '🤽', '🤾', '🤺',
+  '⛹️', '🏊', '🚣', '🧘', '🛀', '🛌',
+  '🫃', '🫄', '🤰', '🤱',
+  '👼', '🫅', '🤴', '👸',
+  '🙇', '💁', '🙅', '🙆', '🙋', '🤦', '🤷',
+  '🙎', '🙍', '💇', '💆',
+  '🫶', '🫱', '🫲', '🫳', '🫴', '🫰', '🫵', '🫃', '🫄', '🫅',
+]);
+
+// Helper: apply skin tone modifier to an emoji if it supports it
+function applySkinTone(emoji, modifier) {
+  if (!modifier || !SKIN_TONE_EMOJIS.has(emoji)) return emoji;
+  // For emojis with variation selector (️ = \uFE0F), insert modifier before it
+  // For simple emojis, append after the base character
+  // Remove any existing skin tone modifier first
+  const stripped = emoji.replace(/[\u{1F3FB}-\u{1F3FF}]/gu, '');
+  // Find the first non-combining character (the base) and insert modifier after it
+  // Most emoji: base codepoint + optional VS16 (\uFE0F)
+  const vs16 = '\uFE0F';
+  const idx = stripped.indexOf(vs16);
+  if (idx > 0) {
+    // Insert modifier before VS16
+    return stripped.slice(0, idx) + modifier + stripped.slice(idx);
+  }
+  // For surrogate pair emojis, insert after the first codepoint
+  const codepoints = [...stripped];
+  if (codepoints.length >= 1) {
+    return codepoints[0] + modifier + codepoints.slice(1).join('');
+  }
+  return stripped + modifier;
+}
+
 // Emoji data with searchable names
 const EMOJI_LIST = [
   // Smileys
@@ -177,15 +239,28 @@ function addRecentEmoji(emoji) {
 export default function EmojiPicker({ onSelect, onClose }) {
   const [search, setSearch] = useState('');
   const [activeCategory, setActiveCategory] = useState('Smileys & People');
+  const [skinTone, setSkinTone] = useState(() => localStorage.getItem('emojiSkinTone') || '');
+  const [showSkinTones, setShowSkinTones] = useState(false);
   const pickerRef = useRef(null);
   const gridRef = useRef(null);
+  const skinToneRef = useRef(null);
   const serverEmojis = useStore(s => s.serverEmojis);
   const currentServer = useStore(s => s.currentServer);
+
+  const changeSkinTone = (modifier) => {
+    setSkinTone(modifier);
+    localStorage.setItem('emojiSkinTone', modifier);
+    setShowSkinTones(false);
+  };
 
   useEffect(() => {
     const handler = (e) => {
       if (pickerRef.current && !pickerRef.current.contains(e.target)) {
         onClose();
+      }
+      // Close skin tone popup when clicking outside it
+      if (skinToneRef.current && !skinToneRef.current.contains(e.target)) {
+        setShowSkinTones(false);
       }
     };
     document.addEventListener('mousedown', handler);
@@ -231,14 +306,72 @@ export default function EmojiPicker({ onSelect, onClose }) {
 
   return (
     <div className="emoji-picker-full" ref={pickerRef}>
-      <div className="emoji-picker-header">
+      <div className="emoji-picker-header" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
         <input
           className="emoji-picker-search"
           placeholder="Search emoji..."
           value={search}
           onChange={e => setSearch(e.target.value)}
           autoFocus
+          style={{ flex: 1 }}
         />
+        <div ref={skinToneRef} style={{ position: 'relative', flexShrink: 0 }}>
+          <button
+            onClick={(e) => { e.stopPropagation(); setShowSkinTones(prev => !prev); }}
+            title="Skin tone"
+            style={{
+              background: 'none',
+              border: 'none',
+              cursor: 'pointer',
+              fontSize: 20,
+              lineHeight: 1,
+              padding: '2px 4px',
+              borderRadius: 4,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            {applySkinTone('✋', skinTone)}
+          </button>
+          {showSkinTones && (
+            <div style={{
+              position: 'absolute',
+              top: '100%',
+              right: 0,
+              marginTop: 4,
+              background: 'var(--bg-floating, #18191c)',
+              border: '1px solid var(--border-color, #222)',
+              borderRadius: 8,
+              padding: '6px 8px',
+              display: 'flex',
+              gap: 6,
+              zIndex: 1000,
+              boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+            }}>
+              {SKIN_TONES.map(({ name, modifier, color }) => (
+                <button
+                  key={name}
+                  onClick={() => changeSkinTone(modifier)}
+                  title={name}
+                  style={{
+                    width: 22,
+                    height: 22,
+                    borderRadius: '50%',
+                    backgroundColor: color,
+                    border: skinTone === modifier ? '2px solid var(--text-normal, #fff)' : '2px solid transparent',
+                    cursor: 'pointer',
+                    padding: 0,
+                    outline: skinTone === modifier ? '2px solid var(--brand-color, #5865f2)' : 'none',
+                    outlineOffset: 1,
+                    transition: 'outline 0.1s, border 0.1s',
+                    flexShrink: 0,
+                  }}
+                />
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
       {!searchResults && (
@@ -297,8 +430,8 @@ export default function EmojiPicker({ onSelect, onClose }) {
                       />
                     </button>
                   ) : (
-                    <button key={`s-${i}`} className="emoji-btn" onClick={() => handleSelect(item.emoji)}>
-                      {item.emoji}
+                    <button key={`s-${i}`} className="emoji-btn" onClick={() => handleSelect(applySkinTone(item.emoji, skinTone))}>
+                      {applySkinTone(item.emoji, skinTone)}
                     </button>
                   )
                 ))
@@ -335,8 +468,8 @@ export default function EmojiPicker({ onSelect, onClose }) {
                 <div className="emoji-picker-category-label">Recently Used</div>
                 <div className="emoji-grid">
                   {recentEmojis.map((emoji, i) => (
-                    <button key={`r-${i}`} className="emoji-btn" onClick={() => handleSelect(emoji)}>
-                      {emoji}
+                    <button key={`r-${i}`} className="emoji-btn" onClick={() => handleSelect(applySkinTone(emoji, skinTone))}>
+                      {applySkinTone(emoji, skinTone)}
                     </button>
                   ))}
                 </div>
@@ -348,8 +481,8 @@ export default function EmojiPicker({ onSelect, onClose }) {
                 <div className="emoji-picker-category-label">{category}</div>
                 <div className="emoji-grid">
                   {emojis.map(([emoji], i) => (
-                    <button key={`${category}-${i}`} className="emoji-btn" onClick={() => handleSelect(emoji)}>
-                      {emoji}
+                    <button key={`${category}-${i}`} className="emoji-btn" onClick={() => handleSelect(applySkinTone(emoji, skinTone))}>
+                      {applySkinTone(emoji, skinTone)}
                     </button>
                   ))}
                 </div>

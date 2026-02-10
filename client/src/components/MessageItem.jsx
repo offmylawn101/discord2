@@ -25,7 +25,8 @@ export default function MessageItem({
   const [reactionPopover, setReactionPopover] = useState(null);
   const [loadingReactors, setLoadingReactors] = useState(false);
   const reactionHoverTimeout = useRef(null);
-  const { addReaction, removeReaction, deleteMessage, pinMessage, unpinMessage, currentChannel } = useStore();
+  const { addReaction, removeReaction, deleteMessage, pinMessage, unpinMessage, currentChannel, toggleBookmark, isBookmarked } = useStore();
+  const bookmarked = useStore(s => s.bookmarks.some(b => b.message_id === message.id));
 
   useEffect(() => {
     if (showEditHistory && editHistory.length === 0) {
@@ -97,6 +98,14 @@ export default function MessageItem({
     }
   };
 
+  const handleBookmark = async () => {
+    try {
+      await toggleBookmark(message.id);
+    } catch (err) {
+      console.error('Bookmark error:', err);
+    }
+  };
+
   const handleBulkClick = (e) => {
     if (bulkSelectMode && onMessageSelect) {
       e.preventDefault();
@@ -140,6 +149,7 @@ export default function MessageItem({
       { label: 'Copy Message ID', icon: '#', action: () => navigator.clipboard.writeText(message.id) },
       { separator: true },
       { label: message.pinned ? 'Unpin Message' : 'Pin Message', icon: '📌', action: handlePin },
+      { label: bookmarked ? 'Remove Bookmark' : 'Bookmark Message', icon: '🔖', action: handleBookmark },
     ];
     if (message.author_id === currentUserId) {
       items.push({ separator: true });
@@ -496,6 +506,7 @@ export default function MessageItem({
           <button className="message-action-btn" onClick={() => setShowEmoji(!showEmoji)} title="Add Reaction">😀</button>
           <button className="message-action-btn" onClick={() => onReply(message)} title="Reply">↩</button>
           <button className="message-action-btn" onClick={handlePin} title={message.pinned ? 'Unpin Message' : 'Pin Message'} style={message.pinned ? { color: 'var(--brand-500)' } : {}}>📌</button>
+          <button className="message-action-btn" onClick={handleBookmark} title={bookmarked ? 'Remove Bookmark' : 'Bookmark Message'} style={bookmarked ? { color: '#faa81a' } : {}}>🔖</button>
           {!message.thread_id && (
             <button className="message-action-btn" onClick={handleCreateThread} title="Create Thread">&#x1F9F5;</button>
           )}

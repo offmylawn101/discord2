@@ -239,6 +239,39 @@ export const useStore = create((set, get) => ({
     }
   },
 
+  // Bookmarks
+  bookmarks: [],
+  showBookmarks: false,
+
+  fetchBookmarks: async () => {
+    try {
+      const bookmarks = await api.get('/bookmarks');
+      set({ bookmarks: bookmarks || [] });
+    } catch {
+      set({ bookmarks: [] });
+    }
+  },
+
+  toggleBookmark: async (messageId) => {
+    const state = get();
+    const existing = state.bookmarks.find(b => b.message_id === messageId);
+    if (existing) {
+      await api.delete(`/bookmarks/${messageId}`);
+      set(s => ({ bookmarks: s.bookmarks.filter(b => b.message_id !== messageId) }));
+    } else {
+      await api.post('/bookmarks', { messageId });
+      // Re-fetch to get full bookmark data with message info
+      const bookmarks = await api.get('/bookmarks');
+      set({ bookmarks: bookmarks || [] });
+    }
+  },
+
+  toggleBookmarksPanel: () => set(s => ({ showBookmarks: !s.showBookmarks })),
+
+  isBookmarked: (messageId) => {
+    return get().bookmarks.some(b => b.message_id === messageId);
+  },
+
   // Search
   showSearchPanel: false,
   toggleSearchPanel: () => set(s => ({ showSearchPanel: !s.showSearchPanel })),

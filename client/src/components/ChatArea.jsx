@@ -28,6 +28,7 @@ export default function ChatArea() {
     members, bulkSelectMode, selectedMessages, toggleBulkSelect,
     toggleMessageSelect, selectAllMessages, clearSelection, bulkDeleteMessages,
     removeBulkMessages, currentServer, toggleSearchPanel,
+    bookmarks, showBookmarks, toggleBookmarksPanel, fetchBookmarks, toggleBookmark,
   } = useStore();
   const lastReadMessageId = useStore(s => s.lastReadMessageId);
   const [content, setContent] = useState('');
@@ -48,6 +49,7 @@ export default function ChatArea() {
   const [slowmodeRemaining, setSlowmodeRemaining] = useState(0);
   const slowmodeInterval = useRef(null);
   const [highlightedMessageId, setHighlightedMessageId] = useState(null);
+  const [topicExpanded, setTopicExpanded] = useState(false);
   const messagesEndRef = useRef(null);
   const messagesAreaRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -171,6 +173,7 @@ export default function ChatArea() {
     setFiles([]);
     setEditingId(null);
     setHasMore(true);
+    setTopicExpanded(false);
     isAtBottom.current = true;
     lastClickedIndex.current = null;
     // Exit bulk select mode on channel change
@@ -557,6 +560,11 @@ export default function ChatArea() {
     return () => socket.off('message_embeds', handler);
   }, []);
 
+  // Fetch bookmarks on mount
+  useEffect(() => {
+    fetchBookmarks();
+  }, []);
+
   // Fetch pin count on channel change
   useEffect(() => {
     if (currentChannel) {
@@ -657,7 +665,18 @@ export default function ChatArea() {
           {currentChannel?.type === 'voice' ? '🔊' : currentChannel?.type === 'dm' ? '@' : '#'}
         </span>
         <span className="name">{channelName}</span>
-        {currentChannel?.topic && <span className="topic">{currentChannel.topic}</span>}
+        {currentChannel?.topic && (
+          <>
+            <div className="topic-divider" />
+            <span
+              className={`topic ${topicExpanded ? 'expanded' : ''}`}
+              onClick={() => setTopicExpanded(!topicExpanded)}
+              title={topicExpanded ? '' : currentChannel.topic}
+            >
+              {currentChannel.topic}
+            </span>
+          </>
+        )}
         {currentChannel?.slowmode > 0 && !bypassesSlowmode && (
           <div className="slowmode-badge" title={`Slowmode: ${currentChannel.slowmode}s`}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
@@ -704,6 +723,28 @@ export default function ChatArea() {
             )}
             {showPins && <PinnedMessages onClose={() => setShowPins(false)} />}
           </div>
+          <div className="header-icon" onClick={toggleBookmarksPanel} title="Bookmarks" style={{ position: 'relative' }}>
+            🔖
+            {bookmarks.length > 0 && (
+              <span style={{
+                position: 'absolute', top: -4, right: -4,
+                background: 'var(--yellow-300)', color: '#000',
+                borderRadius: '50%', minWidth: 16, height: 16,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: 10, fontWeight: 700, padding: '0 3px',
+              }}>
+                {bookmarks.length}
+              </span>
+            )}
+            {showBookmarks && (
+              <BookmarksPanel
+                bookmarks={bookmarks}
+                onClose={toggleBookmarksPanel}
+                onRemove={(msgId) => toggleBookmark(msgId)}
+                onJumpToMessage={jumpToMessage}
+              />
+            )}
+          </div>
           {currentChannel?.server_id && (
             <div className="header-icon" onClick={() => {
               const el = document.querySelector('.member-list');
@@ -722,6 +763,21 @@ export default function ChatArea() {
           <SearchBar />
         </div>
       </div>
+
+      {/* Expanded Topic Popover */}
+      {topicExpanded && currentChannel?.topic && (
+        <div className="topic-popover" onClick={() => setTopicExpanded(false)}>
+          <div className="topic-popover-content" onClick={e => e.stopPropagation()}>
+            <div className="topic-popover-header">
+              <span>#{currentChannel.name}</span>
+              <button className="topic-popover-close" onClick={() => setTopicExpanded(false)}>✕</button>
+            </div>
+            <div className="topic-popover-body">
+              {currentChannel.topic}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Bulk Select Toolbar */}
       {bulkSelectMode && (
@@ -817,10 +873,22 @@ export default function ChatArea() {
       {/* Typing indicator */}
       <div className="typing-indicator">
         {typingNames.length > 0 && (
-          <span>
-            <strong>{typingNames.join(', ')}</strong>
-            {typingNames.length === 1 ? ' is typing...' : ' are typing...'}
-          </span>
+          <>
+            <div className="typing-dots">
+              <span className="typing-dot" />
+              <span className="typing-dot" />
+              <span className="typing-dot" />
+            </div>
+            <span className="typing-text">
+              {typingNames.length >= 4 ? (
+                <><strong>Several people</strong> are typing...</>
+              ) : typingNames.length === 1 ? (
+                <><strong>{typingNames[0]}</strong> is typing...</>
+              ) : (
+                <><strong>{typingNames.join(', ')}</strong> are typing...</>
+              )}
+            </span>
+          </>
         )}
       </div>
 
@@ -975,6 +1043,106 @@ export default function ChatArea() {
           />
         )}
       </div>
+    </div>
+  );
+}
+
+function BookmarksPanel({ bookmarks, onClose, onRemove, onJumpToMessage }) {
+  const panelRef = React.useRef(null);
+
+  React.useEffect(() => {
+    const handler = (e) => {
+      if (panelRef.current && !panelRef.current.contains(e.target)) {
+        onClose();
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [onClose]);
+
+  const formatTime = (d) => {
+    const date = new Date(d);
+    return `${date.toLocaleDateString()} ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+  };
+
+  const handleJump = (bookmark) => {
+    onClose();
+    const el = document.querySelector(`[data-message-id="${bookmark.message_id}"]`);
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      el.style.background = 'var(--bg-modifier-active)';
+      setTimeout(() => { el.style.background = ''; }, 2000);
+    }
+  };
+
+  return (
+    <div className="pinned-panel bookmarks-panel" ref={panelRef}>
+      <div className="pinned-header">Saved Messages</div>
+      {bookmarks.length === 0 ? (
+        <div className="pinned-empty">
+          <div style={{ fontSize: 32, marginBottom: 8 }}>🔖</div>
+          <div>You don't have any saved messages yet.</div>
+          <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>
+            Right-click or hover over a message and click the bookmark icon to save it.
+          </div>
+        </div>
+      ) : (
+        bookmarks.map(bm => (
+          <div key={bm.id} className="pinned-message bookmark-item">
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+              <div style={{
+                width: 24, height: 24, borderRadius: '50%', flexShrink: 0,
+                background: `hsl(${(bm.author_id || '').split('').reduce((a, c) => a + c.charCodeAt(0), 0) % 360}, 60%, 50%)`,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: 11, fontWeight: 600,
+              }}>
+                {bm.author_avatar ? (
+                  <img src={bm.author_avatar} alt="" style={{ width: '100%', height: '100%', borderRadius: '50%' }} />
+                ) : (
+                  bm.author_username?.[0]?.toUpperCase()
+                )}
+              </div>
+              <span style={{ fontWeight: 600, fontSize: 14, color: 'var(--header-primary)' }}>{bm.author_username}</span>
+              <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{formatTime(bm.message_created_at)}</span>
+              <button
+                onClick={(e) => { e.stopPropagation(); onRemove(bm.message_id); }}
+                title="Remove Bookmark"
+                style={{
+                  marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer',
+                  color: 'var(--text-muted)', fontSize: 16, padding: '0 4px', lineHeight: 1,
+                }}
+                onMouseEnter={e => e.target.style.color = 'var(--red-400)'}
+                onMouseLeave={e => e.target.style.color = 'var(--text-muted)'}
+              >
+                ✕
+              </button>
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>
+              {bm.server_name ? `${bm.server_name} > #${bm.channel_name}` : `#${bm.channel_name}`}
+            </div>
+            <div style={{ fontSize: 14, color: 'var(--text-normal)', lineHeight: 1.4 }}>
+              {bm.content?.length > 200 ? bm.content.slice(0, 200) + '...' : bm.content}
+            </div>
+            {bm.note && (
+              <div style={{
+                fontSize: 12, color: 'var(--yellow-300)', marginTop: 4,
+                fontStyle: 'italic',
+              }}>
+                Note: {bm.note}
+              </div>
+            )}
+            <div
+              onClick={() => handleJump(bm)}
+              style={{
+                fontSize: 12, color: 'var(--text-link)', cursor: 'pointer',
+                marginTop: 4, fontWeight: 500,
+              }}
+            >
+              Jump to message
+            </div>
+          </div>
+        ))
+      )}
     </div>
   );
 }
