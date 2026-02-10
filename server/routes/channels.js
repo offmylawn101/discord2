@@ -8,6 +8,66 @@ const { logAudit, AUDIT_ACTIONS } = require('../utils/auditLog');
 
 const router = express.Router();
 
+// GET /read-states/bulk - Get all read states for user (must come before /:channelId routes)
+router.get('/read-states/bulk', authenticate, async (req, res) => {
+  try {
+    const states = await db.all(
+      'SELECT channel_id, last_read_message_id FROM read_states WHERE user_id = ?',
+      [req.userId]
+    );
+    const map = {};
+    for (const s of states) {
+      map[s.channel_id] = s.last_read_message_id;
+    }
+    res.json(map);
+  } catch (err) {
+    console.error('Get bulk read states error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// POST /channels/:channelId/read-ack - Mark channel as read
+router.post('/channels/:channelId/read-ack', authenticate, async (req, res) => {
+  try {
+    const { channelId } = req.params;
+    const { messageId } = req.body;
+
+    if (!messageId) return res.status(400).json({ error: 'messageId is required' });
+
+    if (db.isPg) {
+      await db.run(`
+        INSERT INTO read_states (user_id, channel_id, last_read_message_id, last_read_at)
+        VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT (user_id, channel_id) DO UPDATE SET last_read_message_id = ?, last_read_at = CURRENT_TIMESTAMP
+      `, [req.userId, channelId, messageId, messageId]);
+    } else {
+      await db.run(`
+        INSERT OR REPLACE INTO read_states (user_id, channel_id, last_read_message_id, last_read_at)
+        VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+      `, [req.userId, channelId, messageId]);
+    }
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Read ack error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// GET /channels/:channelId/read-state - Get read state for channel
+router.get('/channels/:channelId/read-state', authenticate, async (req, res) => {
+  try {
+    const state = await db.get(
+      'SELECT last_read_message_id, last_read_at FROM read_states WHERE user_id = ? AND channel_id = ?',
+      [req.userId, req.params.channelId]
+    );
+    res.json(state || { last_read_message_id: null });
+  } catch (err) {
+    console.error('Get read state error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // Create channel
 router.post('/:serverId/channels', authenticate, async (req, res) => {
   try {

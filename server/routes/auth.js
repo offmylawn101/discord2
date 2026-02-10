@@ -175,4 +175,43 @@ router.get('/users/:userId/profile', authenticate, async (req, res) => {
   }
 });
 
+// GET /auth/users/:userId/note - Get note about a user
+router.get('/users/:userId/note', authenticate, async (req, res) => {
+  try {
+    const note = await db.get(
+      'SELECT content, updated_at FROM user_notes WHERE user_id = ? AND target_id = ?',
+      [req.userId, req.params.userId]
+    );
+    res.json(note || { content: '' });
+  } catch (err) {
+    console.error('Get note error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// PUT /auth/users/:userId/note - Set note about a user
+router.put('/users/:userId/note', authenticate, async (req, res) => {
+  try {
+    const { content } = req.body;
+
+    if (db.isPg) {
+      await db.run(`
+        INSERT INTO user_notes (user_id, target_id, content, updated_at)
+        VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT (user_id, target_id) DO UPDATE SET content = ?, updated_at = CURRENT_TIMESTAMP
+      `, [req.userId, req.params.userId, content || '', content || '']);
+    } else {
+      await db.run(`
+        INSERT OR REPLACE INTO user_notes (user_id, target_id, content, updated_at)
+        VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+      `, [req.userId, req.params.userId, content || '']);
+    }
+
+    res.json({ content: content || '', updated_at: new Date().toISOString() });
+  } catch (err) {
+    console.error('Set note error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 module.exports = router;

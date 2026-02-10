@@ -26,6 +26,7 @@ const webhookRoutes = require('./routes/webhooks');
 const discoverRoutes = require('./routes/discover');
 const notificationRoutes = require('./routes/notifications');
 const folderRoutes = require('./routes/folders');
+const gifRoutes = require('./routes/gif');
 
 const app = express();
 const server = http.createServer(app);
@@ -101,6 +102,7 @@ app.use('/api', webhookRoutes);          // For /api/servers/:serverId/webhooks 
 app.use('/api/discover', discoverRoutes);
 app.use('/api/notifications', authenticate, notificationRoutes);
 app.use('/api/folders', authenticate, folderRoutes);
+app.use('/api/gif', gifRoutes); // No auth needed
 
 // Users search
 const db = require('./models/database');

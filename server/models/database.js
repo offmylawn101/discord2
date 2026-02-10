@@ -287,8 +287,8 @@ async function initialize() {
       CREATE TABLE IF NOT EXISTS read_states (
         user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
         channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
-        last_message_id TEXT DEFAULT NULL,
-        mention_count INTEGER DEFAULT 0,
+        last_read_message_id TEXT DEFAULT NULL,
+        last_read_at TIMESTAMP DEFAULT NOW(),
         PRIMARY KEY (user_id, channel_id)
       );
 
@@ -466,6 +466,14 @@ async function initialize() {
       );
       CREATE INDEX IF NOT EXISTS idx_server_folders_user ON server_folders(user_id);
 
+      CREATE TABLE IF NOT EXISTS user_notes (
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        target_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        content TEXT DEFAULT '',
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (user_id, target_id)
+      );
+
       -- Trigger to auto-update search vector
       CREATE OR REPLACE FUNCTION messages_search_update() RETURNS trigger AS $$
       BEGIN
@@ -481,6 +489,20 @@ async function initialize() {
 
       -- Backfill existing messages
       UPDATE messages SET search_vector = to_tsvector('english', COALESCE(content, '')) WHERE search_vector IS NULL;
+
+      -- Migrate read_states table if it has old column names
+      DO $$
+      BEGIN
+        IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='read_states' AND column_name='last_message_id') THEN
+          ALTER TABLE read_states RENAME COLUMN last_message_id TO last_read_message_id;
+        END IF;
+        IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='read_states' AND column_name='mention_count') THEN
+          ALTER TABLE read_states DROP COLUMN mention_count;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='read_states' AND column_name='last_read_at') THEN
+          ALTER TABLE read_states ADD COLUMN last_read_at TIMESTAMP DEFAULT NOW();
+        END IF;
+      END $$;
     `);
   } else {
     sqlite.exec(`
@@ -585,7 +607,8 @@ async function initialize() {
       CREATE TABLE IF NOT EXISTS read_states (
         user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
         channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
-        last_message_id TEXT DEFAULT NULL, mention_count INTEGER DEFAULT 0,
+        last_read_message_id TEXT DEFAULT NULL,
+        last_read_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         PRIMARY KEY (user_id, channel_id)
       );
       CREATE TABLE IF NOT EXISTS relationships (
@@ -707,6 +730,13 @@ async function initialize() {
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       );
       CREATE INDEX IF NOT EXISTS idx_server_folders_user ON server_folders(user_id);
+      CREATE TABLE IF NOT EXISTS user_notes (
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        target_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        content TEXT DEFAULT '',
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (user_id, target_id)
+      );
       CREATE TABLE IF NOT EXISTS message_edits (
         id TEXT PRIMARY KEY,
         message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
@@ -780,6 +810,26 @@ async function initialize() {
       `);
     } catch (e) {
       // Triggers may already exist
+    }
+
+    // Migrate read_states table if it has old column names (last_message_id -> last_read_message_id)
+    try {
+      const info = sqlite.prepare("PRAGMA table_info(read_states)").all();
+      const hasOldColumn = info.some(c => c.name === 'last_message_id');
+      if (hasOldColumn) {
+        sqlite.exec(`
+          DROP TABLE IF EXISTS read_states;
+          CREATE TABLE read_states (
+            user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            channel_id TEXT NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+            last_read_message_id TEXT DEFAULT NULL,
+            last_read_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (user_id, channel_id)
+          );
+        `);
+      }
+    } catch (e) {
+      // Migration may not be needed
     }
   }
 }

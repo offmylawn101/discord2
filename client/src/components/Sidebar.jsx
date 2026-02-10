@@ -473,6 +473,7 @@ function ServerContextMenu({ serverId, x, y, onClose }) {
   const updateNotificationSetting = useStore(s => s.updateNotificationSetting);
   const resetNotificationSetting = useStore(s => s.resetNotificationSetting);
   const isServerMuted = useStore(s => s.isServerMuted);
+  const markServerAsRead = useStore(s => s.markServerAsRead);
   const [showNotifSettings, setShowNotifSettings] = useState(false);
 
   const serverSetting = notificationSettings[`server:${serverId}`] || {};
@@ -528,6 +529,24 @@ function ServerContextMenu({ serverId, x, y, onClose }) {
 
   return (
     <div style={menuStyle} onClick={e => e.stopPropagation()}>
+      <div
+        style={itemStyle}
+        onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-modifier-hover)'}
+        onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+        onClick={(e) => {
+          e.stopPropagation();
+          markServerAsRead(serverId);
+          onClose();
+        }}
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
+        </svg>
+        <span>Mark All as Read</span>
+      </div>
+
+      <div style={{ height: 1, background: 'var(--bg-modifier-accent)', margin: '4px 0' }} />
+
       <div
         style={itemStyle}
         onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-modifier-hover)'}
@@ -744,10 +763,13 @@ function ChannelContextMenu({ channelId, x, y, onClose }) {
   const notificationSettings = useStore(s => s.notificationSettings);
   const updateNotificationSetting = useStore(s => s.updateNotificationSetting);
   const isChannelMuted = useStore(s => s.isChannelMuted);
+  const unreadChannels = useStore(s => s.unreadChannels);
+  const ackChannel = useStore(s => s.ackChannel);
   const [showNotifLevel, setShowNotifLevel] = useState(false);
 
   const channelSetting = notificationSettings[`channel:${channelId}`] || {};
   const muted = isChannelMuted(channelId);
+  const hasUnread = unreadChannels[channelId]?.count > 0;
 
   const handleToggleMute = async (e) => {
     e.stopPropagation();
@@ -786,6 +808,27 @@ function ChannelContextMenu({ channelId, x, y, onClose }) {
 
   return (
     <div style={menuStyle} onClick={e => e.stopPropagation()}>
+      {hasUnread && (
+        <>
+          <div
+            style={itemStyle}
+            onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-modifier-hover)'}
+            onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+            onClick={(e) => {
+              e.stopPropagation();
+              const lastMsgId = unreadChannels[channelId]?.lastMessageId;
+              if (lastMsgId) ackChannel(channelId, lastMsgId);
+              onClose();
+            }}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/>
+            </svg>
+            <span>Mark as Read</span>
+          </div>
+          <div style={{ height: 1, background: 'var(--bg-modifier-accent)', margin: '4px 0' }} />
+        </>
+      )}
       <div
         style={itemStyle}
         onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-modifier-hover)'}

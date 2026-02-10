@@ -34,6 +34,9 @@ export default function UserProfilePopup({ userId, position, onClose }) {
   const [activeTab, setActiveTab] = useState('about');
   const [loading, setLoading] = useState(true);
   const [popupStyle, setPopupStyle] = useState({ visibility: 'hidden' });
+  const [note, setNote] = useState('');
+  const [noteSaved, setNoteSaved] = useState(false);
+  const noteTimeout = useRef(null);
   const popupRef = useRef(null);
   const { user, members, roles, openDm } = useStore();
 
@@ -43,6 +46,34 @@ export default function UserProfilePopup({ userId, position, onClose }) {
       setLoading(false);
     }).catch(() => setLoading(false));
   }, [userId]);
+
+  // Fetch note for this user
+  useEffect(() => {
+    if (userId !== user?.id) {
+      api.get(`/auth/users/${userId}/note`).then(data => {
+        setNote(data.content || '');
+      }).catch(() => {});
+    }
+  }, [userId]);
+
+  // Auto-save note with debounce
+  const handleNoteChange = (value) => {
+    setNote(value);
+    setNoteSaved(false);
+    clearTimeout(noteTimeout.current);
+    noteTimeout.current = setTimeout(async () => {
+      try {
+        await api.put(`/auth/users/${userId}/note`, { content: value });
+        setNoteSaved(true);
+        setTimeout(() => setNoteSaved(false), 2000);
+      } catch {}
+    }, 800);
+  };
+
+  // Cleanup timeout on unmount
+  useEffect(() => {
+    return () => clearTimeout(noteTimeout.current);
+  }, []);
 
   // Position popup after profile loads and renders
   useEffect(() => {
@@ -214,6 +245,24 @@ export default function UserProfilePopup({ userId, position, onClose }) {
           </div>
         )}
       </div>
+
+      {/* Note */}
+      {userId !== user?.id && (
+        <div className="profile-popup-note">
+          <label className="profile-note-label">
+            NOTE
+            {noteSaved && <span className="profile-note-saved">Saved</span>}
+          </label>
+          <textarea
+            className="profile-note-input"
+            placeholder="Click to add a note"
+            value={note}
+            onChange={e => handleNoteChange(e.target.value)}
+            maxLength={256}
+            rows={2}
+          />
+        </div>
+      )}
 
       {/* Action buttons */}
       {userId !== user?.id && (

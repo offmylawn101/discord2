@@ -57,9 +57,47 @@ export const useStore = create((set, get) => ({
   unreadChannels: {}, // { channelId: { count: number, lastMessageId: string } }
   unreadServers: {},  // { serverId: count }
 
+  // Read states (server-persisted)
+  readStates: {}, // { channelId: lastReadMessageId }
+  lastReadMessageId: null, // for current channel - the message ID that was last read before opening
+
   // Connection
   connectionState: 'disconnected', // 'connected', 'connecting', 'disconnected'
   setConnectionState: (state) => set({ connectionState: state }),
+
+  // Read state actions
+  fetchReadStates: async () => {
+    try {
+      const states = await api.get('/read-states/bulk');
+      set({ readStates: states || {} });
+    } catch {}
+  },
+
+  ackChannel: async (channelId, messageId) => {
+    if (!channelId || !messageId) return;
+    try {
+      await api.post(`/channels/${channelId}/read-ack`, { messageId });
+      set(s => ({
+        readStates: { ...s.readStates, [channelId]: messageId },
+        unreadChannels: (() => {
+          const uc = { ...s.unreadChannels };
+          delete uc[channelId];
+          return uc;
+        })(),
+      }));
+    } catch {}
+  },
+
+  markServerAsRead: async (serverId) => {
+    const state = get();
+    const serverChannels = state.channels.filter(c => c.server_id === serverId);
+    for (const ch of serverChannels) {
+      const lastMsg = state.unreadChannels[ch.id]?.lastMessageId;
+      if (lastMsg) {
+        await get().ackChannel(ch.id, lastMsg);
+      }
+    }
+  },
 
   // Channel Settings
   showChannelSettings: null, // channelId or null
@@ -417,7 +455,9 @@ export const useStore = create((set, get) => ({
   // Channel actions
   selectChannel: async (channel) => {
     const prev = get().currentChannel;
-    set({ currentChannel: channel, messages: [], loadingMessages: true, replyingTo: null });
+    // Store the last read message ID before we open the channel
+    const lastRead = get().readStates[channel.id] || null;
+    set({ currentChannel: channel, messages: [], loadingMessages: true, replyingTo: null, lastReadMessageId: lastRead });
     // Track recent channels for quick switcher
     set(s => {
       const entry = { ...channel, server_id: channel.server_id || s.currentServer?.id, _visitedAt: Date.now() };
@@ -445,6 +485,10 @@ export const useStore = create((set, get) => ({
     try {
       const messages = await api.get(`/${channel.id}/messages`);
       set({ messages, loadingMessages: false });
+      // Ack with the latest message (messages are sorted oldest-first, so last element is newest)
+      if (messages.length > 0) {
+        get().ackChannel(channel.id, messages[messages.length - 1].id);
+      }
     } catch {
       set({ loadingMessages: false });
     }

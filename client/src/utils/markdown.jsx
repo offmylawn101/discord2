@@ -1,5 +1,6 @@
 import React from 'react';
 import { useStore } from '../store';
+import { highlightCode } from './syntaxHighlight';
 
 // Discord-like markdown parser
 // Supports: **bold**, *italic*, ~~strikethrough~~, __underline__, `code`, ```code blocks```, ||spoiler||, > blockquote, [links](url), @mentions
@@ -124,10 +125,14 @@ export function renderMarkdown(text) {
         i++;
       }
       i++; // skip closing ```
+      const codeText = codeLines.join('\n');
       elements.push(
-        <pre key={`cb-${i}`} className="md-codeblock">
-          {lang && <div className="md-codeblock-lang">{lang}</div>}
-          <code>{codeLines.join('\n')}</code>
+        <pre key={`cb-${i}`} className="md-codeblock" data-lang={lang || undefined}>
+          <div className="md-codeblock-header">
+            {lang && <span className="md-codeblock-lang">{lang}</span>}
+            <button className="md-codeblock-copy" onClick={() => navigator.clipboard.writeText(codeText)}>Copy</button>
+          </div>
+          <code>{lang ? highlightCode(codeText, lang) : codeText}</code>
         </pre>
       );
       continue;

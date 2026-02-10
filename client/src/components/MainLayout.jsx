@@ -129,6 +129,7 @@ export default function MainLayout() {
   const routeServerId = !isHome ? parts[1] : null;
 
   const fetchNotificationSettings = useStore(s => s.fetchNotificationSettings);
+  const fetchReadStates = useStore(s => s.fetchReadStates);
 
   useEffect(() => {
     fetchServers();
@@ -136,6 +137,7 @@ export default function MainLayout() {
     fetchRelationships();
     fetchNotificationSettings();
     fetchFolders();
+    fetchReadStates();
   }, []);
 
   // Request notification permission on mount

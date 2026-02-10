@@ -5,6 +5,7 @@ import { api } from '../utils/api';
 import MessageItem from './MessageItem';
 import SearchBar from './SearchBar';
 import PinnedMessages from './PinnedMessages';
+import GifPicker from './GifPicker';
 
 export default function ChatArea() {
   const {
@@ -14,6 +15,7 @@ export default function ChatArea() {
     toggleMessageSelect, selectAllMessages, clearSelection, bulkDeleteMessages,
     removeBulkMessages, currentServer, toggleSearchPanel,
   } = useStore();
+  const lastReadMessageId = useStore(s => s.lastReadMessageId);
   const [content, setContent] = useState('');
   const [files, setFiles] = useState([]);
   const [editingId, setEditingId] = useState(null);
@@ -28,6 +30,7 @@ export default function ChatArea() {
   const [mentionIndex, setMentionIndex] = useState(0);
   const mentionStartPos = useRef(null);
   const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [showGifPicker, setShowGifPicker] = useState(false);
   const messagesEndRef = useRef(null);
   const messagesAreaRef = useRef(null);
   const fileInputRef = useRef(null);
@@ -679,24 +682,36 @@ export default function ChatArea() {
             <div>No messages yet. Start the conversation!</div>
           </div>
         ) : (
-          groupedMessages.map(msg => (
-            <MessageItem
-              key={msg.id}
-              message={msg}
-              showHeader={msg.showHeader}
-              isEditing={editingId === msg.id}
-              editContent={editContent}
-              setEditContent={setEditContent}
-              onEditSave={handleEditSave}
-              onEditCancel={() => setEditingId(null)}
-              onEdit={handleEdit}
-              onReply={(m) => { setReplyingTo(m); textareaRef.current?.focus(); }}
-              currentUserId={user.id}
-              bulkSelectMode={bulkSelectMode}
-              isSelected={selectedMessages.has(msg.id)}
-              onMessageSelect={handleMessageSelect}
-            />
-          ))
+          groupedMessages.map((msg, idx) => {
+            const prevMsg = idx > 0 ? groupedMessages[idx - 1] : null;
+            const showUnreadSeparator = lastReadMessageId
+              && prevMsg?.id === lastReadMessageId
+              && msg.id !== lastReadMessageId;
+            return (
+              <React.Fragment key={msg.id}>
+                {showUnreadSeparator && (
+                  <div className="unread-separator">
+                    <span>NEW</span>
+                  </div>
+                )}
+                <MessageItem
+                  message={msg}
+                  showHeader={msg.showHeader}
+                  isEditing={editingId === msg.id}
+                  editContent={editContent}
+                  setEditContent={setEditContent}
+                  onEditSave={handleEditSave}
+                  onEditCancel={() => setEditingId(null)}
+                  onEdit={handleEdit}
+                  onReply={(m) => { setReplyingTo(m); textareaRef.current?.focus(); }}
+                  currentUserId={user.id}
+                  bulkSelectMode={bulkSelectMode}
+                  isSelected={selectedMessages.has(msg.id)}
+                  onMessageSelect={handleMessageSelect}
+                />
+              </React.Fragment>
+            );
+          })
         )}
         <div ref={messagesEndRef} />
       </div>
@@ -833,7 +848,25 @@ export default function ChatArea() {
             onPaste={handlePaste}
             rows={1}
           />
+          <button
+            className="emoji-btn gif-btn"
+            onClick={() => setShowGifPicker(!showGifPicker)}
+            title="GIF"
+            style={{ fontWeight: 700, fontSize: 12, marginRight: 4 }}
+          >
+            GIF
+          </button>
         </div>
+
+        {showGifPicker && (
+          <GifPicker
+            onSelect={(gifUrl) => {
+              sendMessage(currentChannel.id, gifUrl);
+              setShowGifPicker(false);
+            }}
+            onClose={() => setShowGifPicker(false)}
+          />
+        )}
       </div>
     </div>
   );
