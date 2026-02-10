@@ -19,6 +19,10 @@ export const useStore = create((set, get) => ({
   // Emojis
   serverEmojis: [],
 
+  // Events
+  serverEvents: [],
+  showEventsPanel: false,
+
   // Messages
   currentChannel: null,
   messages: [],
@@ -55,6 +59,84 @@ export const useStore = create((set, get) => ({
   // Connection
   connectionState: 'disconnected', // 'connected', 'connecting', 'disconnected'
   setConnectionState: (state) => set({ connectionState: state }),
+
+  // Channel Settings
+  showChannelSettings: null, // channelId or null
+  channelOverwrites: {}, // { channelId: [overwrites] }
+
+  openChannelSettings: (channelId) => set({ showChannelSettings: channelId }),
+  closeChannelSettings: () => set({ showChannelSettings: null }),
+
+  fetchChannelOverwrites: async (channelId) => {
+    try {
+      const overwrites = await api.get(`/channels/${channelId}/overwrites`);
+      set(s => ({
+        channelOverwrites: { ...s.channelOverwrites, [channelId]: overwrites },
+      }));
+      return overwrites;
+    } catch {
+      return [];
+    }
+  },
+
+  updateChannelOverwrite: async (channelId, targetId, targetType, allow, deny) => {
+    const overwrites = await api.put(`/channels/${channelId}/overwrites/${targetId}`, {
+      target_type: targetType,
+      allow: allow.toString(),
+      deny: deny.toString(),
+    });
+    set(s => ({
+      channelOverwrites: { ...s.channelOverwrites, [channelId]: overwrites },
+    }));
+    return overwrites;
+  },
+
+  deleteChannelOverwrite: async (channelId, targetId) => {
+    await api.delete(`/channels/${channelId}/overwrites/${targetId}`);
+    set(s => ({
+      channelOverwrites: {
+        ...s.channelOverwrites,
+        [channelId]: (s.channelOverwrites[channelId] || []).filter(o => o.target_id !== targetId),
+      },
+    }));
+  },
+
+  // Bulk message selection
+  bulkSelectMode: false,
+  selectedMessages: new Set(),
+  toggleBulkSelect: () => set(s => ({ bulkSelectMode: !s.bulkSelectMode, selectedMessages: new Set() })),
+  toggleMessageSelect: (messageId) => set(s => {
+    const next = new Set(s.selectedMessages);
+    if (next.has(messageId)) next.delete(messageId);
+    else if (next.size < 100) next.add(messageId);
+    return { selectedMessages: next };
+  }),
+  selectAllMessages: () => set(s => {
+    const ids = new Set(s.messages.map(m => m.id).slice(0, 100));
+    return { selectedMessages: ids };
+  }),
+  clearSelection: () => set({ selectedMessages: new Set() }),
+  bulkDeleteMessages: async (channelId) => {
+    const ids = Array.from(get().selectedMessages);
+    if (ids.length === 0) return;
+    try {
+      await api.post(`/${channelId}/messages/bulk-delete`, { message_ids: ids });
+      set(s => ({
+        messages: s.messages.filter(m => !s.selectedMessages.has(m.id)),
+        selectedMessages: new Set(),
+        bulkSelectMode: false,
+      }));
+    } catch (err) {
+      console.error('Bulk delete error:', err);
+      throw err;
+    }
+  },
+  removeBulkMessages: (messageIds) => {
+    const idSet = new Set(messageIds);
+    set(s => ({
+      messages: s.messages.filter(m => !idSet.has(m.id)),
+    }));
+  },
 
   // UI
   showSettings: false,
@@ -97,6 +179,10 @@ export const useStore = create((set, get) => ({
       serverEmojis: data.emojis || [],
       currentDm: null,
     });
+    // Fetch server events
+    api.get(`/servers/${serverId}/events`).then(events => {
+      set({ serverEvents: events || [] });
+    }).catch(() => set({ serverEvents: [] }));
     // Clear unread for this server
     set(s => {
       const unreadServers = { ...s.unreadServers };
@@ -525,6 +611,92 @@ export const useStore = create((set, get) => ({
     const emoji = await api.patch(`/servers/${serverId}/emojis/${emojiId}`, { name });
     set(s => ({ serverEmojis: s.serverEmojis.map(e => e.id === emojiId ? emoji : e) }));
     return emoji;
+  },
+
+  // Event actions
+  fetchServerEvents: async (serverId) => {
+    try {
+      const events = await api.get(`/servers/${serverId}/events`);
+      set({ serverEvents: events || [] });
+    } catch {
+      set({ serverEvents: [] });
+    }
+  },
+
+  createEvent: async (serverId, data) => {
+    const event = await api.post(`/servers/${serverId}/events`, data);
+    set(s => ({ serverEvents: [...s.serverEvents, event] }));
+    return event;
+  },
+
+  updateEvent: async (serverId, eventId, data) => {
+    const event = await api.patch(`/servers/${serverId}/events/${eventId}`, data);
+    set(s => ({
+      serverEvents: s.serverEvents.map(e => e.id === eventId ? event : e),
+    }));
+    return event;
+  },
+
+  deleteEvent: async (serverId, eventId) => {
+    await api.delete(`/servers/${serverId}/events/${eventId}`);
+    set(s => ({
+      serverEvents: s.serverEvents.filter(e => e.id !== eventId),
+    }));
+  },
+
+  toggleRsvp: async (serverId, eventId) => {
+    const result = await api.put(`/servers/${serverId}/events/${eventId}/rsvp`);
+    set(s => ({
+      serverEvents: s.serverEvents.map(e =>
+        e.id === eventId
+          ? { ...e, user_rsvp: result.user_rsvp, interested_count: result.interested_count }
+          : e
+      ),
+    }));
+    return result;
+  },
+
+  toggleEventsPanel: () => set(s => ({ showEventsPanel: !s.showEventsPanel })),
+
+  // AutoMod
+  automodRules: [],
+
+  fetchAutomodRules: async (serverId) => {
+    try {
+      const rules = await api.get(`/servers/${serverId}/automod/rules`);
+      set({ automodRules: rules || [] });
+    } catch {
+      set({ automodRules: [] });
+    }
+  },
+
+  createAutomodRule: async (serverId, data) => {
+    const rule = await api.post(`/servers/${serverId}/automod/rules`, data);
+    set(s => ({ automodRules: [rule, ...s.automodRules] }));
+    return rule;
+  },
+
+  updateAutomodRule: async (serverId, ruleId, data) => {
+    const rule = await api.patch(`/servers/${serverId}/automod/rules/${ruleId}`, data);
+    set(s => ({
+      automodRules: s.automodRules.map(r => r.id === ruleId ? rule : r),
+    }));
+    return rule;
+  },
+
+  deleteAutomodRule: async (serverId, ruleId) => {
+    await api.delete(`/servers/${serverId}/automod/rules/${ruleId}`);
+    set(s => ({
+      automodRules: s.automodRules.filter(r => r.id !== ruleId),
+    }));
+  },
+
+  toggleAutomodRule: async (serverId, ruleId, enabled) => {
+    const rule = await api.patch(`/servers/${serverId}/automod/rules/${ruleId}`, { enabled });
+    set(s => ({
+      automodRules: s.automodRules.map(r => r.id === ruleId ? rule : r),
+    }));
+    return rule;
   },
 
   // UI

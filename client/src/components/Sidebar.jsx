@@ -2,6 +2,7 @@ import React, { useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useStore } from '../store';
 import { getSocket } from '../utils/socket';
+import { PERMISSIONS, hasPermission } from '../utils/permissions';
 import VoicePanel from './VoicePanel';
 import StatusPicker from './StatusPicker';
 
@@ -293,8 +294,16 @@ function ChannelItem({ channel, active, onClick, isDragging, dropTarget, onDragS
   const voiceChannel = useStore(s => s.voiceChannel);
   const voiceParticipants = useStore(s => s.voiceParticipants);
   const unread = useStore(s => s.unreadChannels[channel.id]);
+  const openChannelSettings = useStore(s => s.openChannelSettings);
+  const currentServer = useStore(s => s.currentServer);
+  const user = useStore(s => s.user);
   const isVoiceActive = channel.type === 'voice' && voiceChannel?.id === channel.id;
   const hasUnread = unread && unread.count > 0;
+
+  // Check if user is owner or has MANAGE_CHANNELS/MANAGE_ROLES
+  const isOwner = currentServer?.owner_id === user?.id;
+  const userPerms = BigInt(user?.permissions || '0');
+  const canManage = isOwner || hasPermission(userPerms, PERMISSIONS.MANAGE_CHANNELS) || hasPermission(userPerms, PERMISSIONS.MANAGE_ROLES);
 
   return (
     <>
@@ -331,6 +340,28 @@ function ChannelItem({ channel, active, onClick, isDragging, dropTarget, onDragS
           </span>
         )}
         {hasUnread && !active && !unread?.mentions && <div className="unread-badge" />}
+        {(isOwner || canManage) && channel.server_id && (
+          <span
+            className="channel-settings-gear"
+            onClick={(e) => {
+              e.stopPropagation();
+              openChannelSettings(channel.id);
+            }}
+            title="Edit Channel"
+            style={{
+              display: 'none',
+              width: 16, height: 16,
+              color: 'var(--channel-icon)',
+              cursor: 'pointer',
+              flexShrink: 0,
+              marginLeft: 'auto',
+            }}
+            onMouseEnter={e => e.currentTarget.style.color = 'var(--text-normal)'}
+            onMouseLeave={e => e.currentTarget.style.color = 'var(--channel-icon)'}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24"><path fill="currentColor" d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58a.49.49 0 0 0 .12-.61l-1.92-3.32a.49.49 0 0 0-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54a.484.484 0 0 0-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96a.49.49 0 0 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.07.62-.07.94s.02.64.07.94l-2.03 1.58a.49.49 0 0 0-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6A3.6 3.6 0 1 1 12 8.4a3.6 3.6 0 0 1 0 7.2z"/></svg>
+          </span>
+        )}
       </div>
       {isVoiceActive && voiceParticipants.length > 0 && (
         <div className="voice-users">

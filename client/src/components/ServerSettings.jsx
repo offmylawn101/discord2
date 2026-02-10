@@ -1,7 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { useStore } from '../store';
 import { api } from '../utils/api';
-import { PERMISSIONS } from '../utils/permissions';
+import { PERMISSIONS, hasPermission } from '../utils/permissions';
 
 export default function ServerSettings() {
   const {
@@ -100,6 +100,7 @@ export default function ServerSettings() {
           <button className={`settings-nav-item ${tab === 'members' ? 'active' : ''}`} onClick={() => setTab('members')}>Members</button>
           <button className={`settings-nav-item ${tab === 'invites' ? 'active' : ''}`} onClick={() => setTab('invites')}>Invites</button>
           <button className={`settings-nav-item ${tab === 'bans' ? 'active' : ''}`} onClick={() => setTab('bans')}>Bans</button>
+          <button className={`settings-nav-item ${tab === 'automod' ? 'active' : ''}`} onClick={() => setTab('automod')}>AutoMod</button>
           <button className={`settings-nav-item ${tab === 'audit' ? 'active' : ''}`} onClick={() => setTab('audit')}>Audit Log</button>
         </div>
       </div>
@@ -184,6 +185,23 @@ export default function ServerSettings() {
                 <span style={{ color: 'var(--channel-icon)' }}>{ch.type === 'voice' ? '🔊' : '#'}</span>
                 <span style={{ flex: 1 }}>{ch.name}</span>
                 <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{ch.type}</span>
+                <button
+                  onClick={() => {
+                    toggleServerSettings();
+                    useStore.getState().openChannelSettings(ch.id);
+                  }}
+                  style={{
+                    width: 28, height: 28, background: 'transparent', border: 'none',
+                    color: 'var(--text-muted)', cursor: 'pointer', borderRadius: 4,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    fontSize: 16,
+                  }}
+                  onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-modifier-hover)'; e.currentTarget.style.color = 'var(--text-normal)'; }}
+                  onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--text-muted)'; }}
+                  title="Channel Settings"
+                >
+                  &#9881;
+                </button>
               </div>
             ))}
           </>
@@ -265,6 +283,7 @@ export default function ServerSettings() {
         {tab === 'members' && <ServerMembers />}
         {tab === 'invites' && <ServerInvites />}
         {tab === 'bans' && <ServerBans />}
+        {tab === 'automod' && <ServerAutoMod />}
         {tab === 'audit' && <ServerAuditLog />}
       </div>
     </div>

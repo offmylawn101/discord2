@@ -101,6 +101,7 @@ export default function App() {
 
       // Escape to close modals
       if (e.key === 'Escape') {
+        if (state.showChannelSettings) { state.closeChannelSettings(); return; }
         if (state.showSettings) { state.toggleSettings(); return; }
         if (state.showServerSettings) { state.toggleServerSettings(); return; }
         if (state.showCreateServer) { state.toggleCreateServer(); return; }

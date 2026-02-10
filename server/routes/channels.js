@@ -179,6 +179,25 @@ router.delete('/channels/:channelId', authenticate, async (req, res) => {
   }
 });
 
+// Get channel permission overwrites
+router.get('/channels/:channelId/overwrites', authenticate, async (req, res) => {
+  try {
+    const { channelId } = req.params;
+    const channel = await db.get('SELECT * FROM channels WHERE id = ?', [channelId]);
+    if (!channel || !channel.server_id) return res.status(404).json({ error: 'Channel not found' });
+
+    if (!await checkPermission(db, req.userId, channel.server_id, channelId, PERMISSIONS.MANAGE_ROLES)) {
+      return res.status(403).json({ error: 'Missing MANAGE_ROLES permission' });
+    }
+
+    const overwrites = await db.all('SELECT * FROM channel_overwrites WHERE channel_id = ?', [channelId]);
+    res.json(overwrites);
+  } catch (err) {
+    console.error('Get overwrites error:', err);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // Update channel permission overwrites
 router.put('/channels/:channelId/overwrites/:targetId', authenticate, async (req, res) => {
   try {

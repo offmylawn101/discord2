@@ -1517,3 +1517,231 @@ kbd { padding: 2px 8px; background: var(--bg-tertiary); border-radius: 4px; font
   font-size: 11px;
   color: var(--header-secondary);
 }
+
+/* Channel Settings Gear on Sidebar Hover */
+.channel-item:hover .channel-settings-gear {
+  display: flex !important;
+}
+
+/* Channel Settings Page */
+.channel-settings-page {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: var(--bg-primary);
+  z-index: 900;
+  display: flex;
+  animation: settingsIn 0.2s ease;
+}
+
+.channel-settings-sidebar {
+  width: 240px;
+  min-width: 240px;
+  background: var(--bg-secondary);
+  padding: 60px 8px 8px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+.channel-settings-sidebar-inner {
+  width: 200px;
+}
+
+.channel-settings-content {
+  flex: 1;
+  padding: 60px 40px;
+  overflow-y: auto;
+  max-width: 740px;
+}
+
+/* Permission Overwrite List */
+.overwrite-targets-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 16px;
+}
+
+.overwrite-target-item {
+  display: flex;
+  align-items: center;
+  padding: 8px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  gap: 8px;
+  font-size: 14px;
+  color: var(--text-muted);
+  background: transparent;
+  border: none;
+  width: 100%;
+  text-align: left;
+  font-family: inherit;
+}
+
+.overwrite-target-item:hover {
+  background: var(--bg-modifier-hover);
+  color: var(--text-normal);
+}
+
+.overwrite-target-item.active {
+  background: var(--bg-modifier-selected);
+  color: var(--header-primary);
+}
+
+/* Permission Toggle Row */
+.perm-row {
+  display: flex;
+  align-items: center;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--bg-modifier-hover);
+}
+
+.perm-row:last-child {
+  border-bottom: none;
+}
+
+.perm-row-label {
+  flex: 1;
+  font-size: 14px;
+  color: var(--text-normal);
+}
+
+.perm-row-toggles {
+  display: flex;
+  gap: 4px;
+}
+
+.perm-toggle-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 4px;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  transition: background 0.1s, color 0.1s;
+}
+
+.perm-toggle-btn.allow {
+  background: rgba(35, 165, 89, 0.15);
+  color: #57F287;
+}
+
+.perm-toggle-btn.allow.active {
+  background: #23a559;
+  color: white;
+}
+
+.perm-toggle-btn.deny {
+  background: rgba(237, 66, 69, 0.15);
+  color: #ED4245;
+}
+
+.perm-toggle-btn.deny.active {
+  background: #ED4245;
+  color: white;
+}
+
+.perm-toggle-btn.inherit {
+  background: var(--bg-modifier-hover);
+  color: var(--text-muted);
+}
+
+.perm-toggle-btn.inherit.active {
+  background: var(--bg-modifier-active);
+  color: var(--header-primary);
+}
+
+.perm-toggle-btn:hover {
+  filter: brightness(1.2);
+}
+
+/* Bulk Select Mode */
+.bulk-action-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--bg-modifier-active);
+  flex-shrink: 0;
+  z-index: 10;
+}
+
+.bulk-count {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--header-primary);
+  min-width: 90px;
+}
+
+.bulk-btn {
+  padding: 6px 16px;
+  border: none;
+  border-radius: 4px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, opacity 0.15s;
+}
+
+.bulk-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.bulk-select-all {
+  background: var(--bg-modifier-hover);
+  color: var(--header-primary);
+}
+
+.bulk-select-all:hover {
+  background: var(--bg-modifier-active);
+}
+
+.bulk-delete {
+  background: #ED4245;
+  color: white;
+}
+
+.bulk-delete:hover:not(:disabled) {
+  background: #c03537;
+}
+
+.bulk-cancel {
+  background: transparent;
+  color: var(--text-muted);
+  margin-left: auto;
+}
+
+.bulk-cancel:hover {
+  color: var(--header-primary);
+  background: var(--bg-modifier-hover);
+}
+
+/* Message bulk selection styles */
+.message-group.bulk-selected {
+  background: rgba(88, 101, 242, 0.1) !important;
+}
+
+.message-group.bulk-select-active:hover {
+  background: rgba(88, 101, 242, 0.06);
+}
+
+.message-group.bulk-select-active {
+  user-select: none;
+}
+
+.bulk-checkbox-container {
+  pointer-events: none;
+}
+
+.bulk-checkbox {
+  pointer-events: none;
+}

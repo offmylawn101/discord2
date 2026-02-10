@@ -16,6 +16,8 @@ import ServerSettings from './ServerSettings';
 import UserSettings from './UserSettings';
 import ThreadPanel from './ThreadPanel';
 import QuickSwitcher from './QuickSwitcher';
+import ChannelSettings from './ChannelSettings';
+import EventsPanel from './EventsPanel';
 
 export default function MainLayout() {
   const {
@@ -156,6 +158,7 @@ export default function MainLayout() {
       {showServerSettings && <ServerSettings />}
       {showSettings && <UserSettings />}
       {showQuickSwitcher && <QuickSwitcher />}
+      <ChannelSettings />
     </div>
   );
 }
