@@ -288,6 +288,17 @@ export default function ChatArea() {
     });
   };
 
+  // Listen for message embeds
+  useEffect(() => {
+    const socket = getSocket();
+    if (!socket) return;
+    const handler = ({ messageId, embeds }) => {
+      useStore.getState().setMessageEmbeds(messageId, embeds);
+    };
+    socket.on('message_embeds', handler);
+    return () => socket.off('message_embeds', handler);
+  }, []);
+
   // Auto-resize textarea
   useEffect(() => {
     const ta = textareaRef.current;

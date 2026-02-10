@@ -16,6 +16,7 @@ export default function MessageItem({
   const [lightboxImage, setLightboxImage] = useState(null);
   const [contextMenu, setContextMenu] = useState(null);
   const { addReaction, removeReaction, deleteMessage, currentChannel } = useStore();
+  const embeds = useStore(s => s.messageEmbeds[message.id]);
 
   const formatTime = (dateStr) => {
     const d = new Date(dateStr);
@@ -216,6 +217,60 @@ export default function MessageItem({
                 </div>
               );
             })}
+          </div>
+        )}
+
+        {/* Link Embeds */}
+        {embeds && embeds.length > 0 && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 4 }}>
+            {embeds.map((embed, idx) => (
+              <div key={idx} style={{
+                borderLeft: `4px solid ${embed.color || '#5865F2'}`,
+                borderRadius: 4, background: 'var(--bg-secondary)',
+                padding: 12, maxWidth: 520,
+              }}>
+                {embed.siteName && (
+                  <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 4, display: 'flex', alignItems: 'center', gap: 6 }}>
+                    {embed.favicon && <img src={embed.favicon} alt="" style={{ width: 16, height: 16, borderRadius: 2 }} onError={e => e.target.style.display='none'} />}
+                    {embed.siteName}
+                  </div>
+                )}
+                {embed.title && (
+                  <a href={embed.url} target="_blank" rel="noopener noreferrer" style={{
+                    display: 'block', color: 'var(--text-link)', fontWeight: 600,
+                    fontSize: 15, marginBottom: 4, textDecoration: 'none',
+                  }}>
+                    {embed.title}
+                  </a>
+                )}
+                {embed.description && (
+                  <div style={{ fontSize: 13, color: 'var(--text-normal)', lineHeight: 1.4, marginBottom: embed.image ? 8 : 0 }}>
+                    {embed.description}
+                  </div>
+                )}
+                {embed.image && embed.type !== 'image' && (
+                  <img
+                    src={embed.image}
+                    alt=""
+                    style={{ maxWidth: '100%', maxHeight: 300, borderRadius: 4, marginTop: 4 }}
+                    onError={e => e.target.style.display='none'}
+                  />
+                )}
+                {embed.type === 'image' && (
+                  <img
+                    src={embed.image}
+                    alt=""
+                    style={{ maxWidth: '100%', maxHeight: 400, borderRadius: 4 }}
+                    onError={e => e.target.style.display='none'}
+                  />
+                )}
+                {!embed.siteName && embed.domain && (
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
+                    {embed.domain}
+                  </div>
+                )}
+              </div>
+            ))}
           </div>
         )}
 

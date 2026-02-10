@@ -6,6 +6,7 @@ const db = require('../models/database');
 const { authenticate } = require('../middleware/auth');
 const { PERMISSIONS, checkPermission } = require('../utils/permissions');
 const { messageLimiter, searchLimiter } = require('../middleware/rateLimit');
+const { fetchUrlMeta, extractUrls } = require('../utils/embeds');
 
 const router = express.Router();
 
@@ -267,6 +268,35 @@ router.post('/:channelId/messages', authenticate, messageLimiter, upload.array('
 
     // Add mentions array to the message response
     message.mentions = Array.from(mentionedUserIds);
+
+    // Generate URL embeds asynchronously
+    const urls = extractUrls(content);
+    if (urls.length > 0) {
+      // Don't block the response - fetch embeds in background
+      message.embeds = [];
+      setImmediate(async () => {
+        try {
+          const embeds = [];
+          for (const url of urls) {
+            const meta = await fetchUrlMeta(url);
+            if (meta) embeds.push(meta);
+          }
+          if (embeds.length > 0) {
+            // Broadcast embed update to channel
+            const io = req.app.get('io');
+            io?.to(`channel:${channelId}`).emit('message_embeds', {
+              messageId: message.id,
+              channelId,
+              embeds,
+            });
+          }
+        } catch (err) {
+          console.error('Embed fetch error:', err);
+        }
+      });
+    } else {
+      message.embeds = [];
+    }
 
     res.status(201).json(message);
   } catch (err) {

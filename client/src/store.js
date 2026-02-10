@@ -38,6 +38,9 @@ export const useStore = create((set, get) => ({
   // Friends
   relationships: [],
 
+  // Link embeds
+  messageEmbeds: {}, // { messageId: [embeds] }
+
   // Unread tracking
   unreadChannels: {}, // { channelId: { count: number, lastMessageId: string } }
   unreadServers: {},  // { serverId: count }
@@ -307,6 +310,13 @@ export const useStore = create((set, get) => ({
       if (s.threadMessages.some(m => m.id === message.id)) return {};
       return { threadMessages: [...s.threadMessages, message] };
     });
+  },
+
+  // Link embed actions
+  setMessageEmbeds: (messageId, embeds) => {
+    set(s => ({
+      messageEmbeds: { ...s.messageEmbeds, [messageId]: embeds },
+    }));
   },
 
   // Reaction actions
