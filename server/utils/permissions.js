@@ -1,3 +1,5 @@
+const cache = require('./cache');
+
 // Discord-like permission bitfield system
 const PERMISSIONS = {
   // General
@@ -67,6 +69,10 @@ function hasPermission(userPermissions, permission) {
 }
 
 async function computePermissions(db, userId, serverId, channelId = null) {
+  const cacheKey = `perms:${userId}:${serverId}:${channelId || 'none'}`;
+  const cached = await cache.get(cacheKey);
+  if (cached !== null) return BigInt(cached);
+
   // Server owner has all permissions
   const server = await db.get('SELECT owner_id FROM servers WHERE id = ?', [serverId]);
   if (!server) return 0n;
@@ -134,6 +140,7 @@ async function computePermissions(db, userId, serverId, channelId = null) {
     }
   }
 
+  await cache.set(cacheKey, permissions.toString(), 30); // 30 second TTL
   return permissions;
 }
 

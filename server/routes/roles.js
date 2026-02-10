@@ -3,6 +3,7 @@ const { v4: uuidv4 } = require('uuid');
 const db = require('../models/database');
 const { authenticate } = require('../middleware/auth');
 const { PERMISSIONS, checkPermission } = require('../utils/permissions');
+const cache = require('../utils/cache');
 
 const router = express.Router();
 
@@ -26,6 +27,7 @@ router.post('/:serverId/roles', authenticate, async (req, res) => {
     `, [id, serverId, name, color, hoist ? 1 : 0, position, permissions.toString(), mentionable ? 1 : 0]);
 
     const role = await db.get('SELECT * FROM roles WHERE id = ?', [id]);
+    await cache.delPattern(`perms:*:${serverId}:*`);
     res.status(201).json(role);
   } catch (err) {
     console.error('Create role error:', err);
@@ -56,6 +58,7 @@ router.patch('/:serverId/roles/:roleId', authenticate, async (req, res) => {
 
     values.push(roleId, serverId);
     await db.run(`UPDATE roles SET ${updates.join(', ')} WHERE id = ? AND server_id = ?`, values);
+    await cache.delPattern(`perms:*:${serverId}:*`);
 
     const role = await db.get('SELECT * FROM roles WHERE id = ?', [roleId]);
     res.json(role);
@@ -77,6 +80,7 @@ router.delete('/:serverId/roles/:roleId', authenticate, async (req, res) => {
     if (role.is_default) return res.status(400).json({ error: 'Cannot delete the @everyone role' });
 
     await db.run('DELETE FROM roles WHERE id = ?', [roleId]);
+    await cache.delPattern(`perms:*:${serverId}:*`);
     res.json({ deleted: true });
   } catch (err) {
     res.status(500).json({ error: 'Internal server error' });
@@ -99,6 +103,7 @@ router.put('/:serverId/members/:userId/roles/:roleId', authenticate, async (req,
 
     await db.run('INSERT OR IGNORE INTO member_roles (server_id, user_id, role_id) VALUES (?, ?, ?)',
       [serverId, userId, roleId]);
+    await cache.delPattern(`perms:*:${serverId}:*`);
 
     res.json({ assigned: true });
   } catch (err) {
@@ -116,6 +121,7 @@ router.delete('/:serverId/members/:userId/roles/:roleId', authenticate, async (r
 
     await db.run('DELETE FROM member_roles WHERE server_id = ? AND user_id = ? AND role_id = ?',
       [serverId, userId, roleId]);
+    await cache.delPattern(`perms:*:${serverId}:*`);
 
     res.json({ removed: true });
   } catch (err) {
