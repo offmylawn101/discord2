@@ -15,11 +15,13 @@ import InviteModal from './InviteModal';
 import ServerSettings from './ServerSettings';
 import UserSettings from './UserSettings';
 import ThreadPanel from './ThreadPanel';
+import QuickSwitcher from './QuickSwitcher';
 
 export default function MainLayout() {
   const {
     currentServer, currentChannel, fetchServers, selectServer,
     showCreateServer, showInviteModal, showServerSettings, showSettings,
+    showQuickSwitcher, toggleQuickSwitcher,
     fetchDms, fetchRelationships, setConnectionState,
   } = useStore();
   const connectionState = useStore(s => s.connectionState);
@@ -93,6 +95,18 @@ export default function MainLayout() {
     return cleanup;
   }, []);
 
+  // Global Ctrl+K / Cmd+K for Quick Switcher
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
+        e.preventDefault();
+        toggleQuickSwitcher();
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [toggleQuickSwitcher]);
+
   useEffect(() => {
     if (routeServerId && routeServerId !== currentServer?.id) {
       selectServer(routeServerId).catch(() => navigate('/channels/@me'));
@@ -126,6 +140,7 @@ export default function MainLayout() {
       {showInviteModal && <InviteModal />}
       {showServerSettings && <ServerSettings />}
       {showSettings && <UserSettings />}
+      {showQuickSwitcher && <QuickSwitcher />}
     </div>
   );
 }

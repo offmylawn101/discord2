@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
+import { useStore } from '../store';
 
 // Emoji data with searchable names
 const EMOJI_LIST = [
@@ -151,6 +152,7 @@ const CATEGORIES = {
 };
 
 const CATEGORY_ICONS = {
+  'Server': null, // Will be dynamically set based on server emojis
   'Recently Used': '🕐',
   'Smileys & People': '😀',
   'Hearts & Love': '❤️',
@@ -177,6 +179,8 @@ export default function EmojiPicker({ onSelect, onClose }) {
   const [activeCategory, setActiveCategory] = useState('Smileys & People');
   const pickerRef = useRef(null);
   const gridRef = useRef(null);
+  const serverEmojis = useStore(s => s.serverEmojis);
+  const currentServer = useStore(s => s.currentServer);
 
   useEffect(() => {
     const handler = (e) => {
@@ -190,17 +194,30 @@ export default function EmojiPicker({ onSelect, onClose }) {
 
   const recentEmojis = useMemo(() => getRecentEmojis(), []);
 
+  // Search results including custom emojis
   const searchResults = useMemo(() => {
     if (!search.trim()) return null;
     const q = search.toLowerCase();
-    return EMOJI_LIST.filter(([emoji, keywords]) =>
+    const standardResults = EMOJI_LIST.filter(([emoji, keywords]) =>
       keywords.toLowerCase().includes(q)
-    ).map(([emoji]) => emoji);
-  }, [search]);
+    ).map(([emoji]) => ({ type: 'standard', emoji }));
+
+    const customResults = (serverEmojis || []).filter(e =>
+      e.name.toLowerCase().includes(q)
+    ).map(e => ({ type: 'custom', emoji: e }));
+
+    return [...customResults, ...standardResults];
+  }, [search, serverEmojis]);
 
   const handleSelect = (emoji) => {
     addRecentEmoji(emoji);
     onSelect(emoji);
+    onClose();
+  };
+
+  const handleCustomSelect = (customEmoji) => {
+    const emojiStr = `<:${customEmoji.name}:${customEmoji.id}>`;
+    onSelect(emojiStr);
     onClose();
   };
 
@@ -209,6 +226,8 @@ export default function EmojiPicker({ onSelect, onClose }) {
     const el = gridRef.current?.querySelector(`[data-category="${cat}"]`);
     if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
+
+  const hasCustomEmojis = serverEmojis && serverEmojis.length > 0;
 
   return (
     <div className="emoji-picker-full" ref={pickerRef}>
@@ -224,7 +243,21 @@ export default function EmojiPicker({ onSelect, onClose }) {
 
       {!searchResults && (
         <div className="emoji-picker-categories">
-          {Object.entries(CATEGORY_ICONS).map(([cat, icon]) => (
+          {hasCustomEmojis && (
+            <button
+              className={`emoji-picker-cat-btn ${activeCategory === 'Server' ? 'active' : ''}`}
+              onClick={() => scrollToCategory('Server')}
+              title={currentServer?.name || 'Server'}
+              style={{ fontSize: 14, fontWeight: 600 }}
+            >
+              {currentServer?.icon ? (
+                <img src={currentServer.icon} alt="" style={{ width: 20, height: 20, borderRadius: 4, objectFit: 'cover' }} />
+              ) : (
+                <span style={{ fontSize: 11 }}>{currentServer?.name?.[0]?.toUpperCase() || 'S'}</span>
+              )}
+            </button>
+          )}
+          {Object.entries(CATEGORY_ICONS).filter(([cat]) => cat !== 'Server').map(([cat, icon]) => (
             <button
               key={cat}
               className={`emoji-picker-cat-btn ${activeCategory === cat ? 'active' : ''}`}
@@ -249,16 +282,53 @@ export default function EmojiPicker({ onSelect, onClose }) {
                   No emojis found
                 </div>
               ) : (
-                searchResults.map((emoji, i) => (
-                  <button key={i} className="emoji-btn" onClick={() => handleSelect(emoji)}>
-                    {emoji}
-                  </button>
+                searchResults.map((item, i) => (
+                  item.type === 'custom' ? (
+                    <button
+                      key={`c-${item.emoji.id}`}
+                      className="emoji-btn"
+                      onClick={() => handleCustomSelect(item.emoji)}
+                      title={`:${item.emoji.name}:`}
+                    >
+                      <img
+                        src={item.emoji.image_url}
+                        alt={item.emoji.name}
+                        style={{ width: 22, height: 22, objectFit: 'contain' }}
+                      />
+                    </button>
+                  ) : (
+                    <button key={`s-${i}`} className="emoji-btn" onClick={() => handleSelect(item.emoji)}>
+                      {item.emoji}
+                    </button>
+                  )
                 ))
               )}
             </div>
           </div>
         ) : (
           <>
+            {/* Server custom emojis */}
+            {hasCustomEmojis && (
+              <div data-category="Server">
+                <div className="emoji-picker-category-label">{currentServer?.name || 'Server'}</div>
+                <div className="emoji-grid">
+                  {serverEmojis.map(emoji => (
+                    <button
+                      key={emoji.id}
+                      className="emoji-btn"
+                      onClick={() => handleCustomSelect(emoji)}
+                      title={`:${emoji.name}:`}
+                    >
+                      <img
+                        src={emoji.image_url}
+                        alt={emoji.name}
+                        style={{ width: 22, height: 22, objectFit: 'contain' }}
+                      />
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
             {/* Recently used */}
             {recentEmojis.length > 0 && (
               <div data-category="Recently Used">
