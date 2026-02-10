@@ -99,6 +99,7 @@ export default function ServerSettings() {
           <button className={`settings-nav-item ${tab === 'members' ? 'active' : ''}`} onClick={() => setTab('members')}>Members</button>
           <button className={`settings-nav-item ${tab === 'invites' ? 'active' : ''}`} onClick={() => setTab('invites')}>Invites</button>
           <button className={`settings-nav-item ${tab === 'bans' ? 'active' : ''}`} onClick={() => setTab('bans')}>Bans</button>
+          <button className={`settings-nav-item ${tab === 'audit' ? 'active' : ''}`} onClick={() => setTab('audit')}>Audit Log</button>
         </div>
       </div>
 
@@ -261,6 +262,7 @@ export default function ServerSettings() {
         {tab === 'members' && <ServerMembers />}
         {tab === 'invites' && <ServerInvites />}
         {tab === 'bans' && <ServerBans />}
+        {tab === 'audit' && <ServerAuditLog />}
       </div>
     </div>
   );
@@ -366,6 +368,139 @@ function ServerBans() {
             {ban.reason && <span style={{ color: 'var(--text-muted)', fontSize: 13 }}>- {ban.reason}</span>}
           </div>
         ))
+      )}
+    </>
+  );
+}
+
+function ServerAuditLog() {
+  const { currentServer } = useStore();
+  const [entries, setEntries] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [filter, setFilter] = useState('');
+
+  React.useEffect(() => {
+    setLoading(true);
+    const params = filter ? `?action_type=${filter}` : '';
+    api.get(`/servers/${currentServer.id}/audit-log${params}`)
+      .then(setEntries)
+      .catch(() => setEntries([]))
+      .finally(() => setLoading(false));
+  }, [currentServer.id, filter]);
+
+  const actionLabels = {
+    SERVER_UPDATE: 'Updated server',
+    CHANNEL_CREATE: 'Created channel',
+    CHANNEL_UPDATE: 'Updated channel',
+    CHANNEL_DELETE: 'Deleted channel',
+    ROLE_CREATE: 'Created role',
+    ROLE_UPDATE: 'Updated role',
+    ROLE_DELETE: 'Deleted role',
+    MEMBER_KICK: 'Kicked member',
+    MEMBER_BAN: 'Banned member',
+    MEMBER_UNBAN: 'Unbanned member',
+    MEMBER_ROLE_UPDATE: 'Updated member roles',
+    INVITE_CREATE: 'Created invite',
+    MESSAGE_DELETE: 'Deleted message',
+    MESSAGE_PIN: 'Pinned message',
+  };
+
+  const actionColors = {
+    SERVER_UPDATE: '#5865F2',
+    CHANNEL_CREATE: '#57F287',
+    CHANNEL_UPDATE: '#FEE75C',
+    CHANNEL_DELETE: '#ED4245',
+    ROLE_CREATE: '#57F287',
+    ROLE_UPDATE: '#FEE75C',
+    ROLE_DELETE: '#ED4245',
+    MEMBER_KICK: '#ED4245',
+    MEMBER_BAN: '#ED4245',
+    MEMBER_UNBAN: '#57F287',
+    MEMBER_ROLE_UPDATE: '#5865F2',
+    INVITE_CREATE: '#57F287',
+    MESSAGE_DELETE: '#ED4245',
+    MESSAGE_PIN: '#FEE75C',
+  };
+
+  const formatDate = (d) => {
+    const date = new Date(d);
+    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  };
+
+  return (
+    <>
+      <div className="settings-title">Audit Log</div>
+      <div style={{ marginBottom: 16 }}>
+        <select
+          className="form-input"
+          value={filter}
+          onChange={e => setFilter(e.target.value)}
+          style={{ width: 200 }}
+        >
+          <option value="">All Actions</option>
+          {Object.entries(actionLabels).map(([key, label]) => (
+            <option key={key} value={key}>{label}</option>
+          ))}
+        </select>
+      </div>
+
+      {loading ? (
+        <div style={{ color: 'var(--text-muted)' }}>Loading audit log...</div>
+      ) : entries.length === 0 ? (
+        <div style={{ color: 'var(--text-muted)' }}>No audit log entries</div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+          {entries.map(entry => (
+            <div key={entry.id} style={{
+              display: 'flex', alignItems: 'flex-start', gap: 12, padding: '10px 12px',
+              background: 'var(--bg-secondary)', borderRadius: 4,
+            }}>
+              <div style={{
+                width: 32, height: 32, borderRadius: '50%', flexShrink: 0,
+                background: `hsl(${(entry.user_id || '').split('').reduce((a, c) => a + c.charCodeAt(0), 0) % 360}, 60%, 50%)`,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: 13, fontWeight: 600,
+              }}>
+                {entry.avatar ? (
+                  <img src={`/uploads/${entry.avatar}`} alt="" style={{ width: 32, height: 32, borderRadius: '50%' }} />
+                ) : (
+                  entry.username?.[0]?.toUpperCase() || '?'
+                )}
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                  <span style={{ fontWeight: 600, color: 'var(--header-primary)', fontSize: 14 }}>{entry.username}</span>
+                  <span style={{
+                    fontSize: 12, padding: '1px 6px', borderRadius: 3,
+                    background: `${actionColors[entry.action] || '#5865F2'}22`,
+                    color: actionColors[entry.action] || '#5865F2',
+                    fontWeight: 600,
+                  }}>
+                    {actionLabels[entry.action] || entry.action}
+                  </span>
+                  {entry.target_type && entry.target_id && (
+                    <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                      {entry.target_type}: {entry.changes?.name || entry.target_id.slice(0, 8)}
+                    </span>
+                  )}
+                </div>
+                {entry.changes && Object.keys(entry.changes).length > 0 && (
+                  <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
+                    {Object.entries(entry.changes).filter(([k, v]) => v !== undefined && v !== null).map(([key, value]) => (
+                      <span key={key} style={{ marginRight: 8 }}>{key}: {typeof value === 'object' ? JSON.stringify(value) : String(value)}</span>
+                    ))}
+                  </div>
+                )}
+                {entry.reason && (
+                  <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2, fontStyle: 'italic' }}>
+                    Reason: {entry.reason}
+                  </div>
+                )}
+                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>{formatDate(entry.created_at)}</div>
+              </div>
+            </div>
+          ))}
+        </div>
       )}
     </>
   );
