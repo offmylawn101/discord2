@@ -14,6 +14,7 @@ import CreateServerModal from './CreateServerModal';
 import InviteModal from './InviteModal';
 import ServerSettings from './ServerSettings';
 import UserSettings from './UserSettings';
+import ThreadPanel from './ThreadPanel';
 
 export default function MainLayout() {
   const {
@@ -22,6 +23,7 @@ export default function MainLayout() {
     fetchDms, fetchRelationships, setConnectionState,
   } = useStore();
   const connectionState = useStore(s => s.connectionState);
+  const activeThread = useStore(s => s.activeThread);
   const navigate = useNavigate();
 
   // Track connection state
@@ -109,7 +111,8 @@ export default function MainLayout() {
       ) : currentChannel ? (
         <>
           <ChatArea />
-          {showMemberList && <MemberList />}
+          {activeThread && <ThreadPanel />}
+          {showMemberList && !activeThread && <MemberList />}
         </>
       ) : (
         <div className="main-content">
